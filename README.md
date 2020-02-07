@@ -6,6 +6,7 @@ fasttext是facebook开发的一款快速文本分类的工具。工具本身有�
 ### fasttext的基本原理
 
 fastText简而言之，就是把文档中所有词通过lookup table映射为一个embedding向量，经过avg-pooling后直接经过2层全连接层得到分类结果。本质十分类似于一个BOW模型，但由于使用了词向量因此效果更好。同时由于使用pooling的方式因此对词序不敏感，仅通过n-gram的方式捕捉一定程度的context。
+ ![fasttext原理图](fasttext_struct.png)
  
 当然，如果只用unigram的话会丢掉word order信息，所以通过加入n-gram features进行补充。fastText是对char级别生成embedding的。(这里同bert不同，bert虽然是基于字做vocab，但是每个词的向量不是简单的将字emb拼起来，而是需要完整经过bert模型前向运行得到，所以得到的词向量效果也非常好，然而fastText这种通过字向量加和成为词向量那肯定是不行的，会极大受到字面匹配程度的干扰，一个经典的例子就是fasttext得到的词向量进行kNN计算，“交易”最接近的词是“交易法”，但gensim训练的词向量则是“买卖”)。
 
@@ -15,12 +16,11 @@ fastText简而言之，就是把文档中所有词通过lookup table映射为一
 ### fasttext的简单实践
 facebook最早推出的是c++的版本，后续封装了python版本，实测python版本的运行效率也很高，因此本文采用的是fasttext的python版本。安装方式通过pip就能完成，这里不赘述了。我们要做一个简单的分类任务，根据用户关注的文本来预测用户的年龄，简单的demo如下：
 ```markdown
-Syntax highlighted code block
 import fasttext as ft
 
-input_file = 'for_tgrocery_sex_predaa'
+input_file = 'for_tgrocery_age_preda_train'
+test_file = 'for_tgrocery_age_preda_test'
 output = '/tmp/classifier_comm'
-test_file = 'for_tgrocery_sex_predab'#'for_tgrocery_0307.csv'
 
 # set params
 dim= 30
@@ -45,19 +45,6 @@ result = classifier.test(test_file)
 print ('P@1:', result.precision)
 print ('R@1:', result.recall)
 print ('Number of examples:', result.nexamples)
-# Header 1
-## Header 2
-### Header 3
-
-- Bulleted
-- List
-
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
 ```
 	
 fasttext做文本分类的时候也是有用到词向量的（而不是像之前说的简单的BOW），并且在模型保存的时候存储下来了：
