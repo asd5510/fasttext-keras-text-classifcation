@@ -154,7 +154,7 @@ wd_mapping = {
  '净瓶': 192010,
  ...}
 ```
-通过上述wd_mapping，将文本数值化。这里需要注意一个问题，fasttext允许输入变长文本，但是我们写的keras版本默认只能接受定长的数据，因此需要将变长文本转为定长文本，此处常见的方法为truncate and pad。也就是设置一个sequence长度，将超过该长度的文本序列裁剪，将不足该长度的文本序列用padding符号补齐。该padding符号需要单独编码为一个数值，以便模型区分，这里我们将PAD符号编码为0。
+通过上述wd_mapping，将文本数值化。这里需要注意一个问题，fasttext允许输入变长文本，但是我们写的keras版本默认只能接受定长的数据，因此需要将变长文本转为定长文本，此处常见的方法为truncate and pad。也就是设置一个sequence长度，将超过该长度的文本序列裁剪，将不足该长度的文本序列用padding符号补齐。该padding符号需要单独编码为一个数值，以便模型区分，这里我们将PAD符号编码为0。同时设置sequence长度为100。
 
 由此得到特征矩阵X。同时把label标签数组age提取出来：
 
@@ -186,29 +186,57 @@ array(['34', '32', '42', '32', '38', '34', '46', '34', '30', '35', '32',
        '28'])
 ```
 
-
-```markdown
-tovalue = pickle.load(open('wv_dict','rb'))
-
-dd = pickle.load(open('tmp1','rb'))
-
-X = dd['X']
-age = np.array(dd['age'])
-
 然后在我们的数据集上试一下：
 
+```markdown
+SPLIT_LINE = 3000000
 
-### fasttext存在的问题
+ct = Counter(age)
+W = np.array([1/np.sqrt(ct[i])*5 for i in age[:SPLIT_LINE]])
 
-fasttext就非常敏感，原因在于它是将所有embedding直接avg后过NN的，噪声多了以后avg的结果自然带不了什么信息了，说实话是太粗暴了。
-Fasttext怎么也对短文本有偏好呢？预测概率高的总是短文本，即使有些很不靠谱的。这个必须解决啊！
+model.fit(X[:SPLIT_LINE], kr.utils.to_categorical(age[:SPLIT_LINE],CLASS_NUM), validation_data=(X[SPLIT_LINE:], kr.utils.to_categorical(age[SPLIT_LINE:],CLASS_NUM)), nb_epoch=1, batch_size=1024, sample_weight=W)
+```
+
+注意这里我们做了数据均衡处理，因为在我们的数据集中用户的年龄分布差距很大，高龄的用户样本非常稀少，因此通过提供一个sample_weight来使得类别不均衡的问题得到改善。关于是否需要做类别均衡，这个问题不能一概而论，我的经验是如果你需要照顾冷门类目的识别覆盖率，则需要做类别均衡，而如果只是在意预测大盘的整体准确率的话则没有必要做类别均衡处理。
+
+```markdown
+Train on 3000000 samples, validate on 928866 samples
+Epoch 1/1
+2020-02-08 11:22:08.395383: I tensorflow/core/platform/cpu_feature_guard.cc:140] Your CPU supports instructions that this TensorFlow binary was not compiled to use: SSE4.1 SSE4.2 AVX
+2020-02-08 11:22:10.310209: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1212] Found device 0 with properties: 
+name: Tesla K20m major: 3 minor: 5 memoryClockRate(GHz): 0.7055
+pciBusID: 0000:09:00.0
+totalMemory: 2.00GiB freeMemory: 1.94GiB
+2020-02-08 11:22:10.310287: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1312] Adding visible gpu devices: 0
+2020-02-08 11:22:12.636853: I tensorflow/core/common_runtime/gpu/gpu_device.cc:993] Creating TensorFlow device (/job:localhost/replica:0/task:0/device:GPU:0 with 1727 MB memory) -> physical GPU (device: 0, name: Tesla K20m, pci bus id: 0000:09:00.0, compute capability: 3.5)
+3000000/3000000 [==============================] - 342s 114us/step - loss: 3.5083 - acc: 0.0959 - val_loss: 3.3296 - val_acc: 0.1122
+```
+
+训练好之后，测试一下效果。下边的to_id()函数功能是将文本数值化，然后topn函数的作用是返回预测结果的top3标签和概率：
+
+```markdown
+In [27]: np.apply_along_axis(topn, 1, model.predict(to_id('毛泽东思想 太极拳')), 3) 
+Out[27]: 
+array([[6.10000000e+01, 6.40000000e+01, 1.70000000e+01, 1.92667879e-02,
+        1.70407854e-02, 1.66415088e-02]])
+
+In [28]: np.apply_along_axis(topn, 1, model.predict(to_id('夕阳红')), 3) 
+Out[28]: 
+array([[17.        , 18.        , 20.        ,  0.02589941,  0.02517441,
+         0.02304856]])	 
+```
+
+### mask的意义
+
+
+经过对上边模型结果的测试，发现对于短文本的预测效果不如fasttext，这是为什么呢？
+
+注意到上边我们将短文本转化为定长的方式是使用PAD补齐，PAD符号作为编号0也有一个对应的embedding向量，那么可以试想一下对于短文本来说，average-pooling后的向量会变成[]
+
 我猜想是否是因为它们处理变长文本的方式不同导致的，CNN会将所有变长文本padding到最长文本的长度，所以短文本的空白部分其实是有填充的。而Tgrocery和Fasttext直接构建一个BOW的模型(Fasttext的BOW是词向量的叠加，此外fasttext是不关心一个句子的长度的，无论多长都会用avg-pooling来处理它，因此不存在CNN遇到的一些padding的问题)，因此短文本的BOW就更纯净。简单说就是padding操作实际给短文本添加了白噪声，使得模型不会对短文本有偏。
 	回头看这里又有两个截然不同的观点，后边我做keras-fasttext实验的时候发现简单的zero-padding有很多问题(这种padding引入的噪声非常大)，然而这里CNN就是用了zero-padding(keras.preprocessing.sequence.pad_sequences)才使得不会对短文本置信度有偏。并且既然keras提供这个库表明存在即是合理的。这两种观点我看起来都有道理，还是需要根据实际情况决定吧。
 fasttext有明显的对短文本概率高的倾向了，因为fasttext是直接粗暴做avg-pooling后就softmax：
- 
 
-
-### mask的意义
 在softmax的场景下，embedding加mask非常重要，如果不加mask短文本结果会非常差！终于验证了embedding mask的意义，以及fasttext为什么work well的原因：
  
 model相比mdelC只是去掉了mask。
@@ -218,8 +246,22 @@ This can actually cause a fairly substantial fluctuation in performance in some 
 	最后说下keras Embedding的mask_zero机制，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的。
  
 经典的例子是后边接个LSTM：
+
+
+
+
+ 
+
+### fasttext做回归的实验
+
+model.fit(X[:3000000], np.array(age[:3000000])[:,np.newaxis], validation_data=(X[3000000:], np.array(age[3000000:])[:,np.newaxis]), nb_epoch=3, batch_size=1024, )
+
+
  
 ### pooling策略对比
+
+fasttext就非常敏感，原因在于它是将所有embedding直接avg后过NN的，噪声多了以后avg的结果自然带不了什么信息了，说实话是太粗暴了。
+Fasttext怎么也对短文本有偏好呢？预测概率高的总是短文本，即使有些很不靠谱的。这个必须解决啊！
 
 不管是去除低频词还是增加emb len，max-pooling的效果就是不如mean-pooling。难道这也是为什么fasttext用mean-pooling的原因？这里有个max-pooling很大的问题，每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这对于没有pre-train的wordVec是难以训练的。
 	Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？https://github.com/tensorflow/tensorflow/issues/16028。可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如：
