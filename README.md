@@ -71,7 +71,7 @@ Number of examples: 334955
 ```
 运行结果如上图，我们再直观测试一下同年龄相关的词汇看模型预测的怎么样：
 
-```markdown
+```python
 In [4]: classifier.predict_proba(['京剧'])
 Out[4]: [[('77', 0.126953)]]
 
@@ -103,7 +103,7 @@ fasttext实现简单，速度快。但正是其高度封装，缺乏定制能力
 ### keras的fasttext实现
 
 第一版模型非常简单，使用keras的Sequential模型搭建方式：
-```markdown
+```python
 import tensorflow.contrib.keras as kr
 from keras.models import Sequential 
 from keras.layers import *
@@ -132,7 +132,7 @@ model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accurac
 # model.compile(loss='mse',optimizer='Adam',metrics=['mse'])
 ```
 这基本就是fasttext的结构，只是我们多加了一个denseLayer，而fasttext是只有一层denLayer的。当然这里要求的数据输入形式也发生了变化，我们需要自己做文本数值化，并且fit模型的时候label和data分两个numpy array输入。为了完成文本数值化需要先遍历数据集构建映射字典：
-```markdown
+```python
 wd_mapping = {
  '棉类': 80288,
  '盛盛': 5225,
@@ -158,7 +158,7 @@ wd_mapping = {
 
 由此得到特征矩阵X。同时把label标签数组age提取出来：
 
-```markdown
+```python
 In [18]: X.shape
 Out[18]: (3964000, 100)
 
@@ -188,7 +188,7 @@ array(['34', '32', '42', '32', '38', '34', '46', '34', '30', '35', '32',
 
 然后在我们的数据集上试一下：
 
-```markdown
+```python
 SPLIT_LINE = 3000000
 
 ct = Counter(age)
@@ -214,7 +214,7 @@ totalMemory: 2.00GiB freeMemory: 1.94GiB
 
 训练好之后，测试一下效果。下边的to_id()函数功能是将文本数值化，然后topn函数的作用是返回预测结果的top3标签和概率：
 
-```markdown
+```python
 In [27]: np.apply_along_axis(topn, 1, model.predict(to_id('毛泽东思想 太极拳')), 3) 
 Out[27]: 
 array([[6.10000000e+01, 6.40000000e+01, 1.70000000e+01, 1.92667879e-02,
@@ -242,7 +242,7 @@ MASK方式是因为最近大热的bert、transformer的出现而引人关注。�
 keras中提供了带mask的Embedding。介绍一下keras Embedding的mask_zero机制，经典的使用场景是在LSTM上，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的，为此我们还需要自定义一个average-pooling layer来接受mask的传参并进行处理。
 
 
-```markdown
+```python
 from keras import backend as K
 from keras.engine.topology import Layer
 
@@ -276,7 +276,7 @@ class MyMeanPool(Layer):
 
 然后我们将代码稍作修改：
 
-```markdown
+```python
 model = Sequential()
 
 model.add(Embedding(VOCAB_SIZE,EMB_DIM,input_length=MAX_WORDS,mask_zero=True))
