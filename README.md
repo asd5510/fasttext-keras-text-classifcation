@@ -319,36 +319,66 @@ array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
 可以看到未使用MASK的版本，虽然同样的词汇，不同长度预测的结果不同，就是因为PAD的embedding也参与计算了。而下边使用MASK的版本相同的词汇不管长度多长，结果都是一样的，因为参与average-pooling的都是同一个词汇。
 另外也能看到下边使用MASK的版本对于预测短文本的效果好了不少。
 
-
-我猜想是否是因为它们处理变长文本的方式不同导致的，CNN会将所有变长文本padding到最长文本的长度，所以短文本的空白部分其实是有填充的。而Tgrocery和Fasttext直接构建一个BOW的模型(Fasttext的BOW是词向量的叠加，此外fasttext是不关心一个句子的长度的，无论多长都会用avg-pooling来处理它，因此不存在CNN遇到的一些padding的问题)，因此短文本的BOW就更纯净。简单说就是padding操作实际给短文本添加了白噪声，使得模型不会对短文本有偏。
-	回头看这里又有两个截然不同的观点，后边我做keras-fasttext实验的时候发现简单的zero-padding有很多问题(这种padding引入的噪声非常大)，然而这里CNN就是用了zero-padding(keras.preprocessing.sequence.pad_sequences)才使得不会对短文本置信度有偏。并且既然keras提供这个库表明存在即是合理的。这两种观点我看起来都有道理，还是需要根据实际情况决定吧。
-fasttext有明显的对短文本概率高的倾向了，因为fasttext是直接粗暴做avg-pooling后就softmax：
-
-
 我们也可以从一些相关文章中找到一致的看法： 
 
-```markdown
 This can actually cause a fairly substantial fluctuation in performance in some networks. Suppose that instead of a convnet, we feed the embeddings to a deep averaging network. Then the varying number of nonzero pad vectors (according to which training batch the example is assigned in SGD) will very much affect the value of the average embedding. I've seen this cause a variation of up to 3% accuracy on text classification tasks. One possible remedy is to set the value of the embedding for the pad index to zero explicitly between each backprop step during training. This is computationally kind of wasteful (and also requires explicitly feeding the number of nonzero embeddings in each sample to the network), but it does the trick. I would like to see a feature like Torch's LookupTableMaskZero as well.
 
-hanxiao在pooling的设计介绍中也提到：
+上边提到实在不行就每次将padding emb强制设置为0，否则用mask是最好的。另外hanxiao在pooling的设计介绍中也提到：
+
 I say almost, as one has to be careful with the padded symbols when dealing with a batch of sequences of different lengths. Those paddings should never be involved in the calculation. Tiny details, yet people often forget about them.
+
+
+### POOLING策略对比
+
+用MASK解决了PAD引入噪声的问题，然而又出现了新的问题，加了MASK之后我发现结果对于长文本的置信度会普遍偏低。
+
+原因是在于我们采取的average-pooling导致的。还记得上文我们提到过average-pooling的缺点，当文本非常长时，经过average-pooling后得到的embedding会失去特点，这一点换成max-pooling则不会出现，只要词汇的“个性”够突出，无论多长的文本max-pooling都能体现出该词汇。
+
+而恰恰不好的一点在于我们的数据集中噪声词非常多，很多词汇完全看不出跟用户的年龄的关系。在这种情况下使用average-pooling不仅仅是长文本置信度低了，而是可能根本就预测不准。
+
+于是解决方法就比较明确了，我们将average-pooling换成max-pooling看看。如果不考虑MASK的话，那么只要GlobalAveragePooling1D()换成GlobalMaxPooling1D())
+就行了，但这里棘手的问题在于由于MASK的方案需要保持，所以还是需要自定义一个能够处理mask的max-pooling layer。并且这个带mask的max-pooling layer的设计会复杂一些。由于是要取max，那么为了让PAD符号对应的向量不产生的影响，应该将这个向量转变为一个最负的向量，这样取max操作时才不会有影响：
+
+```python
+class MyMaxPool(Layer):
+    def __init__(self, axis, **kwargs):
+        self.supports_masking = True
+        self.axis = axis
+        super(MyMaxPool, self).__init__(**kwargs)
+
+    def compute_mask(self, input, input_mask=None):
+        # need not to pass the mask to next layers
+        return None
+
+    def call(self, x, mask=None):
+        if mask is not None:
+            mask = K.repeat(mask, x.shape[-1])
+            mask = tf.transpose(mask, [0,2,1])
+            mask = K.cast(mask, K.floatx())
+            x = x + (mask-tf.ones_like(mask))
+            return K.max(x, axis=self.axis)# / K.sum(mask, axis=self.axis)
+        else:
+            return K.max(x, axis=self.axis)
+
+    def compute_output_shape(self, input_shape):
+        output_shape = []
+        for i in range(len(input_shape)):
+            if i!=self.axis:
+                output_shape.append(input_shape[i])
+        return tuple(output_shape)
+
+model = Sequential()
+
+model.add(Embedding(VOCAB_SIZE,EMB_DIM,input_length=MAX_WORDS,mask_zero=True))
+model.add(MyMaxPool(axis=1))
+model.add(Dense(30,activation='tanh'))
+
+model.add(Dense(CLASS_NUM, activation='softmax'))
+model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
 ```
-上边提到实在不行就每次将padding emb强制设置为0，否则用mask是最好的。
-
-
-### fasttext做回归的实验
-
-model.fit(X[:3000000], np.array(age[:3000000])[:,np.newaxis], validation_data=(X[3000000:], np.array(age[3000000:])[:,np.newaxis]), nb_epoch=3, batch_size=1024, )
-
-
- 
-### pooling策略对比
-
-fasttext就非常敏感，原因在于它是将所有embedding直接avg后过NN的，噪声多了以后avg的结果自然带不了什么信息了，说实话是太粗暴了。
-Fasttext怎么也对短文本有偏好呢？预测概率高的总是短文本，即使有些很不靠谱的。这个必须解决啊！
 
 不管是去除低频词还是增加emb len，max-pooling的效果就是不如mean-pooling。难道这也是为什么fasttext用mean-pooling的原因？这里有个max-pooling很大的问题，每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这对于没有pre-train的wordVec是难以训练的。
-	Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？https://github.com/tensorflow/tensorflow/issues/16028。可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如：
+Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？https://github.com/tensorflow/tensorflow/issues/16028。可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如：
  
 可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。
 有两种方法改善tf.max的梯度影响范围，一种是自定义gradient计算函数，另一种是”softening” the max function，like the Lp-norm：
@@ -366,5 +396,14 @@ Fasttext怎么也对短文本有偏好呢？预测概率高的总是短文本，
 	这个适用于对输入做条件dropout，太稀疏的输入就不dropout了。Keras默认dropout在predict阶段是不生效的，如果想要predict也dropout，可以定义一个permanent dropout: md.add(Lambda(lambda x: K.dropout(x, level=0.9)))。这个dropout是backend提供的感觉同keras Dropout Layer不太一样。
 
 另外有人做了我类似想法的事情：
+
+
+### fasttext做回归的实验
+
+model.fit(X[:3000000], np.array(age[:3000000])[:,np.newaxis], validation_data=(X[3000000:], np.array(age[3000000:])[:,np.newaxis]), nb_epoch=3, batch_size=1024, )
+
+
+ 
+
  
 
