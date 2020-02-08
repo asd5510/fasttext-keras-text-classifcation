@@ -17,7 +17,7 @@ fastText简而言之，就是把文档中所有词通过lookup table映射为一
 我的理解是文本分类任务由于很多情况下对不需要捕捉高级的语法关系，上下文语境等等，而只需要做词汇匹配就行。因此长文本下BOW不会太过稀疏，效果也会不错。
 
 ### fasttext的简单实践
-facebook最早推出的是c++的版本，后续封装了python版本，实测python版本的运行效率也很高，因此本文采用的是fasttext的python版本。安装方式通过pip就能完成，这里不赘述了。我们要做一个简单的分类任务，根据用户关注的文本来预测用户的年龄，简单的demo如下：
+facebook最早推出的是c++的版本，后续封装了python版本，实测python版本的运行效率也很高，因此本文采用的是fasttext的python版本。安装方式通过pip就能完成，我使用的是0.8.3版本，安装的时候需要加上版本号pip install fasttext==0.8.3，同时要求预先安装Cython。我们要做一个简单的分类任务，根据用户关注的文本来预测用户的年龄，简单的demo如下：
 ```markdown
 import fasttext as ft
 
@@ -55,13 +55,41 @@ print ('Number of examples:', result.nexamples)
     ll32 迅游 编程 老爷 输送 回到 中国农业银行 北京分行 信息安全 小爱 火绒 高速 安防 后勤 人才 安全 驾驶 超悦 永信 在线教育 守望 少儿 智能 微云 庄稼 益安 cn 悦茂 联赛 酒家 长亭 东升 web 哈勃 精神状态 千聊 中国青少年发展基金会 rainbow 小米 兰州 望远镜 水果 运维 转回 花童 美团 香里 姥姥家 平谷 果多美 北京 车车 开放 大巴 路况 春秋 石屋 网络安全 大侠 百行 客官 查导 榉树 合乘 吱车 婚姻登记 驾驶者 为青 vipjr itutorgroup 企业级 前沿技术 hubble netman 其子 普世化 pwnhub 应用层 telescope 护网杯 微油 电踏车 店查 尧西 origin 上助家 导及 桃叶谷 宇宙空间 及乐 火方 升空 黄栌 如履薄冰 乐乘 若隐若现 处室 此圈 看雪 控管 婚俗
     ll42 猪扒 同事 餐饮 九朝会 眼镜 区块 猎豹 数字 研学 有助于 平均 状况 管理者 沦陷 主义 食品市场 image 嘉宴 com 多点 快人 财经 振兴 德鲁克 傅盛 ceo 音米 玲香 men 版权 金刚 新生 笔记 图像 版块 复购 生产力 信文 不接 打卡 空间设计 一味 乡村 形象店 爱马 小腰 合生汇 望京 停车 代驾 颠簸 文旅 田园 货币 数千万 邦德 紫牛 识堂 华少 绵密 混沌 川菜 奶泡 
 
-其中ll是标签的前缀，这是fasttext的格式要求，后边跟的是标签，在我们的场景下是用户的年龄。再之后接的是标签对应的文本数据，需要注意这里需要预先完成分词，去除停用词等文本预处理操作，然后分词后的文本用空格分隔。（fasttext针对的英文文本天然就是这种形式）
+其中ll是标签的前缀，这是fasttext的格式要求，配合参数label_prefix定义前缀使用，后边跟的是标签，在我们的场景下是用户的年龄。再之后接的是标签对应的文本数据，需要注意这里需要预先完成分词，去除停用词等文本预处理操作，然后分词后的文本用空格分隔。（fasttext针对的英文文本天然就是这种形式）
 
 再之后就是设定一些参数，其中embedding的维度dim我们设置为30，文本分类往往不需要很长的embedding，因为不需要太过于依赖深层的语义。然后是学习率lr，epoch为迭代轮数。min_count体现在对于冷门词的处理，对于在数据集中出现的词频低于min_count的部分，fasttext将用UNK来代替以避免词表的爆炸。然后word_ngrams很重要，对于不需要利用上下文的话就让word_ngrams=1,这样运行效率最高。一般不会让word_ngrams>3否则运行效率会非常低，并且得到的模型会非常巨大。
 
+```markdown
+Read 273M words
+Number of words:  232273
+Number of labels: 109
+Progress: 100.0%  words/sec/thread: 1401274  lr: 0.000000  loss: 3.565652  eta: 0h0m 14m 
+Start Test...
+P@1: 0.12258363063695123
+R@1: 0.12239581004504142
+Number of examples: 334955
+```
+运行结果如上图，我们再直观测试一下同年龄相关的词汇看模型预测的怎么样：
+
+```markdown
+In [4]: classifier.predict_proba(['京剧'])
+Out[4]: [[('77', 0.126953)]]
+
+In [5]: classifier.predict_proba(['王者 荣耀'])
+Out[5]: [[('14', 0.318359)]]
+
+In [6]: classifier.predict_proba(['中年 危机'])
+Out[6]: [[('45', 0.320313)]]
+
+In [7]: classifier.predict_proba(['考研 大学'])
+Out[7]: [[('24', 0.332031)]]
+```
+
+out部分的结果为[[预测年龄，概率]]，看起来效果还不错。
+
 fasttext做文本分类的时候也是有用到词向量的（而不是像之前说的简单的BOW），并且在模型保存的时候存储下来了：
  
-fasttext是可以读取pre-train vec的。ft.supervised()加上参数pretrained_vectors，     pretrained word vectors (.vec file) for supervised learning []。
+fasttext是可以读取pre-train vec的。ft.supervised()加上参数pretrained_vectors。
 ### keras的fasttext实现
 
 
