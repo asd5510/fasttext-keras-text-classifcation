@@ -239,9 +239,9 @@ array([[17.        , 18.        , 20.        ,  0.02589941,  0.02517441,
 
 MASK方式是因为最近大热的bert、transformer的出现而引人关注。一篇很好的文章在https://leemeng.tw/neural-machine-translation-with-transformer-and-tensorflow2.html 其中详细描述了transformer中mask的作用和实现方式。在 Transformer 裡頭有兩種 masks：padding mask和look ahead mask。前者就是我们需要的。
 
-keras中提供了带mask的Embedding。介绍一下keras Embedding的mask_zero机制，经典的使用场景是在LSTM上，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的，为此我们还需要自定义一个average-pooling layer来接受mask的传参并进行处理。
+keras中提供了带mask的Embedding。介绍一下keras Embedding的mask_zero机制，经典的使用场景是在LSTM上，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的。keras官方文档的解释：mask_zero: 是否把 0 看作为一个应该被遮蔽的特殊的 "padding" 值。 这对于可变长的 循环神经网络层 十分有用。 如果设定为 True，那么接下来的所有层都必须支持 masking，否则就会抛出异常。 如果 mask_zero 为 True，作为结果，索引 0 就不能被用于词汇表中 （input_dim 应该与 vocabulary + 1 大小相同）。
 
-	keras官方文档的解释：mask_zero: 是否把 0 看作为一个应该被遮蔽的特殊的 "padding" 值。 这对于可变长的 循环神经网络层 十分有用。 如果设定为 True，那么接下来的所有层都必须支持 masking，否则就会抛出异常。 如果 mask_zero 为 True，作为结果，索引 0 就不能被用于词汇表中 （input_dim 应该与 vocabulary + 1 大小相同）。
+综上，我们需要自定义一个average-pooling layer来接受mask的传参并进行处理：
 
 ```python
 from keras import backend as K
@@ -436,16 +436,23 @@ def call(self, x, mask=None):
 
 于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train emb，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
 
-突然有个好想法，在emb layer后边接一个dropout不就能够在使用max-pooling的情况下更好训练么？试了一下没什么效果，dropout的做法是让神经元的输出强制变0，所以从model.summary()看是没有shape的变化的：
+当然，最后采用的做法还是ensemble的思路，如果两种方法各有千秋那么就都一起用，于是最后的方式是同时使用max-pooling和average-pooling，将它们的结果concat起来：
 
-但这还是不符合max-pooling的要求啊，0 output适合的是mean-pooling。当然dropout force to 0对于大部分NN是有意义的，因为神经网络本质是多层神经元乘加+非线性堆叠起来，0*w会一直为0，所以前期dropout的神经元在后边所有的网络都不会造成影响。
-转念一想，我把Dropout放在InputLayer，而不是EmbeddingLayer后感觉就OK了。然而又有新问题，dropout后又有些新句子变成全0了导致训练又出现nan。于是又需要做一个condition操作了，注意在设计网络结构的时候不能直接将原始操作代码逻辑直接操作神经元，而是需要将逻辑封装在一个自定义层中的call()部分，就像上边自定义mask max-pooling layer，网络只能够由层组成。另外，tf提供了lambda layer可以只需添加一个lambda表达式作为逻辑，keras.layers.Lambda(lambda wide: wide**2)，这个对于大多数简单逻辑更方便，毕竟本质就只需要改写call()而已。于是一个condition_dropout的写法：
- input_cond_drop = keras.layers.Lambda(lambda x: K.switch(
-            K.tf.count_nonzero(x)>5,Dropout(0.5)(x),x))(input)
-	这个适用于对输入做条件dropout，太稀疏的输入就不dropout了。Keras默认dropout在predict阶段是不生效的，如果想要predict也dropout，可以定义一个permanent dropout: md.add(Lambda(lambda x: K.dropout(x, level=0.9)))。这个dropout是backend提供的感觉同keras Dropout Layer不太一样。
+```python
+input = Input(shape=(MAX_WORDS,), name='input')
+emb = Embedding(VOCAB_SIZE,EMB_DIM,input_length=MAX_WORDS,mask_zero=True)(input)
 
-另外有人做了我类似想法的事情：
+p1 =  MyMeanPool(axis=1)(emb)
+p2 =  MyMaxPool(axis=1)(emb)
 
+mer = concatenate([p1,p2])
+den = Dense(30, activation='tanh')(mer)
+out = Dense(CLASS_NUM, activation='softmax')(den)
+
+modelC = Model(inputs=[input], outputs=[out])
+modelC.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
+```
+需要注意的是由于我们之前用的是keras的Sequential序贯模型的写法，该写法虽然简单但是不支持一些复杂的设计，比如接收多输入的Layer。而此处我们需要一个concatenate()操作，因此将写法改成了函数式模型的写法。
 
 ### fasttext做回归的实验
 
