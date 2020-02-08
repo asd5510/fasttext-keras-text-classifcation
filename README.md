@@ -18,7 +18,7 @@ fastText简而言之，就是把文档中所有词通过lookup table映射为一
 
 ### fasttext的简单实践
 facebook最早推出的是c++的版本，后续封装了python版本，实测python版本的运行效率也很高，因此本文采用的是fasttext的python版本。安装方式通过pip就能完成，我使用的是0.8.3版本，安装的时候需要加上版本号pip install fasttext==0.8.3，同时要求预先安装Cython。我们要做一个简单的分类任务，根据用户关注的文本来预测用户的年龄，简单的demo如下：
-```markdown
+```python
 import fasttext as ft
 
 input_file = 'for_tgrocery_age_preda_train'
