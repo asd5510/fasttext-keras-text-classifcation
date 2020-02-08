@@ -431,8 +431,11 @@ def call(self, x, mask=None):
         return K.sum(x**2, axis=self.axis) ** 0.5
 ```
 
-这里超参数选p=2的就是最常见的L2-norm，发现当p比较大的时候无法收敛，怀疑是数值上溢，但是p=10就上溢也太夸张了吧。即使是L2-norm也很容易发散，应该不是好的pooling策略。
-换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train emb，效果明显好多了，并且不只是吃pre-train emb的老本，是可以在此基础上持续优化的。
+这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
+另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个好的pooling策略。
+
+于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train emb，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
+
 突然有个好想法，在emb layer后边接一个dropout不就能够在使用max-pooling的情况下更好训练么？试了一下没什么效果，dropout的做法是让神经元的输出强制变0，所以从model.summary()看是没有shape的变化的：
 
 但这还是不符合max-pooling的要求啊，0 output适合的是mean-pooling。当然dropout force to 0对于大部分NN是有意义的，因为神经网络本质是多层神经元乘加+非线性堆叠起来，0*w会一直为0，所以前期dropout的神经元在后边所有的网络都不会造成影响。
