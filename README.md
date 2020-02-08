@@ -85,11 +85,21 @@ In [7]: classifier.predict_proba(['考研 大学'])
 Out[7]: [[('24', 0.332031)]]
 ```
 
-out部分的结果为[[预测年龄，概率]]，看起来效果还不错。
+out部分的结果为[[预测年龄，概率]]，看起来效果还不错。另外fasttext是可以读取pre-train vec的，在ft.supervised()API里加上参数pretrained_vectors来读取一个预训练的词向量。这里我没有使用预训练的词向量，如果加上预训练词向量的效果可能更好一些。
 
-fasttext做文本分类的时候也是有用到词向量的（而不是像之前说的简单的BOW），并且在模型保存的时候存储下来了：
- 
-fasttext是可以读取pre-train vec的。ft.supervised()加上参数pretrained_vectors。
+fasttext实现简单，速度快。但正是其高度封装，缺乏定制能力导致有三个不足之处：
+
+1） fasttext做文本分类的时候是用到词向量的，但是没有提供API能够提取输出这个词向量，这带来一些不便捷的地方。比如我想输出词向量做kNN计算来测试对于语义的表示能力。我们只能从保存的fasttext模型中一窥fasttext的词向量：
+
+
+ ![fasttext wv](fasttext_wv.png "fasttext模型文件中的词向量")
+
+
+2） fasttext默认使用average-pooling作为pooling策略，然而这个策略十分简单，并且存在一些问题，却无法更改。
+3）fasttext只能做分类，而在我们的任务里，分类并不一定是最优方案。预测年龄也可以当做一个回归问题。因为年龄是具有连续性的，做回归任务能让模型很容易的学到年龄的连续性，而分类任务上，一个label=29岁的样本，预测为27岁和预测为72岁的loss是一样的，这有点不太合理。
+
+由于以上三点，我打算自己用keras写一个fasttext的实现，从而能够充分的定制化。
+
 ### keras的fasttext实现
 
 
