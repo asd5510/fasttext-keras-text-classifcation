@@ -226,12 +226,68 @@ array([[17.        , 18.        , 20.        ,  0.02589941,  0.02517441,
          0.02304856]])	 
 ```
 
-### mask的意义
+### PAD的问题和MASK的意义
 
 
 经过对上边模型结果的测试，发现对于短文本的预测效果不如fasttext，这是为什么呢？
 
-注意到上边我们将短文本转化为定长的方式是使用PAD补齐，PAD符号作为编号0也有一个对应的embedding向量，那么可以试想一下对于短文本来说，average-pooling后的向量会变成[]
+注意到上边我们将短文本转化为定长的方式是使用PAD补齐，PAD符号作为编号0也有一个对应的embedding向量，那么可以试想一下对于短文本来说，average-pooling后的向量表达的几乎就是PAD向量了。虽然模型会学到PAD符号是无意义的，但是短文本本身的特点还是得不到充分表达。
+
+延伸一些说，PAD的方式其实是广泛使用在一些深度神经网络相关的文本模型中，如CNN、RNN。但CNN和RNN的机制比pooling复杂的多，比如RNN可以通过门机制来减少PAD符号的影响，而pooling策略只是简单的对向量做了平均，所以短文本受到PAD的影响就会十分明显。
+
+因此更优的处理应该是怎么样的呢？我们不希望模型去学习一个PAD符号对应的向量，考虑到使用的是average-pooling，因此我们希望直接将PAD符号对应的embedding直接置为全0[0,0,0,0...,0,0]，这样就不会产生任何影响了。那么如何在keras中实现这样一个功能呢？这就需要借助到MASK了。
+
+MASK方式是因为最近大热的bert、transformer的出现而引人关注。一篇很好的文章在https://leemeng.tw/neural-machine-translation-with-transformer-and-tensorflow2.html 其中详细描述了transformer中mask的作用和实现方式。在 Transformer 裡頭有兩種 masks：padding mask和look ahead mask。前者就是我们需要的。
+
+keras中提供了带mask的Embedding。介绍一下keras Embedding的mask_zero机制，经典的使用场景是在LSTM上，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的，为此我们还需要自定义一个average-pooling layer来接受mask的传参并进行处理。
+
+
+```markdown
+from keras import backend as K
+from keras.engine.topology import Layer
+
+class MyMeanPool(Layer):
+    def __init__(self, axis, **kwargs):
+        self.supports_masking = True
+        self.axis = axis
+        super(MyMeanPool, self).__init__(**kwargs)
+
+    def compute_mask(self, input, input_mask=None):
+        # need not to pass the mask to next layers
+        return None
+
+    def call(self, x, mask=None):
+        if mask is not None:
+            mask = K.repeat(mask, x.shape[-1])
+            mask = tf.transpose(mask, [0,2,1])
+            mask = K.cast(mask, K.floatx())
+            x = x * mask
+            return K.sum(x, axis=self.axis) / K.sum(mask, axis=self.axis)
+        else:
+            return K.mean(x, axis=self.axis)
+
+    def compute_output_shape(self, input_shape):
+        output_shape = []
+        for i in range(len(input_shape)):
+            if i!=self.axis:
+                output_shape.append(input_shape[i])
+        return tuple(output_shape)
+```
+
+然后我们将代码稍作修改：
+
+```markdown
+model = Sequential()
+
+model.add(Embedding(VOCAB_SIZE,EMB_DIM,input_length=MAX_WORDS,mask_zero=True))
+model.add(MyMeanPool(axis=1))
+model.add(Dense(30,activation='tanh'))
+
+model.add(Dense(CLASS_NUM, activation='softmax'))
+model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
+```
+
+
 
 我猜想是否是因为它们处理变长文本的方式不同导致的，CNN会将所有变长文本padding到最长文本的长度，所以短文本的空白部分其实是有填充的。而Tgrocery和Fasttext直接构建一个BOW的模型(Fasttext的BOW是词向量的叠加，此外fasttext是不关心一个句子的长度的，无论多长都会用avg-pooling来处理它，因此不存在CNN遇到的一些padding的问题)，因此短文本的BOW就更纯净。简单说就是padding操作实际给短文本添加了白噪声，使得模型不会对短文本有偏。
 	回头看这里又有两个截然不同的观点，后边我做keras-fasttext实验的时候发现简单的zero-padding有很多问题(这种padding引入的噪声非常大)，然而这里CNN就是用了zero-padding(keras.preprocessing.sequence.pad_sequences)才使得不会对短文本置信度有偏。并且既然keras提供这个库表明存在即是合理的。这两种观点我看起来都有道理，还是需要根据实际情况决定吧。
