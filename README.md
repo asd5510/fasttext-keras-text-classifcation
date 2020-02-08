@@ -102,6 +102,101 @@ fasttext实现简单，速度快。但正是其高度封装，缺乏定制能力
 
 ### keras的fasttext实现
 
+第一版模型非常简单，使用keras的Sequential模型搭建方式：
+```markdown
+import tensorflow.contrib.keras as kr
+from keras.models import Sequential 
+from keras.layers import *
+from collections import Counter
+from keras import backend as K 
+import pickle
+
+VOCAB_SIZE=232620
+EMB_DIM=80
+MAX_WORDS=100 
+CLASS_NUM=105
+
+model = Sequential()
+
+model.add(Embedding(VOCAB_SIZE,EMB_DIM,input_length=MAX_WORDS))
+# pooling策略，max-pooling可换成GlobalMaxPooling1D()
+model.add(GlobalAveragePooling1D())
+
+model.add(Dense(30,activation='tanh'))
+
+model.add(Dense(CLASS_NUM, activation='softmax'))
+model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
+
+# 如果要做回归就改成下边的方式
+# model.add(Dense(1,activation='linear'))
+# model.compile(loss='mse',optimizer='Adam',metrics=['mse'])
+```
+这基本就是fasttext的结构，只是我们多加了一个denseLayer，而fasttext是只有一层denLayer的。当然这里要求的数据输入形式也发生了变化，我们需要自己做文本数值化，并且fit模型的时候label和data分两个numpy array输入。为了完成文本数值化需要先遍历数据集构建映射字典：
+```markdown
+wd_mapping = {
+ '棉类': 80288,
+ '盛盛': 5225,
+ '心书阁': 228207,
+ '大毛': 119492,
+ '纤云书阁': 117564,
+ '等次': 133319,
+ '无赖': 84071,
+ '万康大': 132459,
+ '通化': 230582,
+ '铁友': 95631,
+ '妈宝丽': 136747,
+ '往北冷': 147370,
+ '优农': 2043,
+ '商丘站': 214523,
+ '经过': 208361,
+ '廖智': 72032,
+ '静乐县': 186418,
+ '净瓶': 192010,
+ ...}
+```
+通过上述wd_mapping，将文本数值化。这里需要注意一个问题，fasttext允许输入变长文本，但是我们写的keras版本默认只能接受定长的数据，因此需要将变长文本转为定长文本，此处常见的方法为truncate and pad。也就是设置一个sequence长度，将超过该长度的文本序列裁剪，将不足该长度的文本序列用padding符号补齐。该padding符号需要单独编码为一个数值，以便模型区分，这里我们将PAD符号编码为0。
+
+由此得到特征矩阵X。同时把label标签数组age提取出来：
+
+```markdown
+In [18]: X.shape
+Out[18]: (3964000, 100)
+
+In [19]: X[:100]
+Out[19]: 
+array([[212707,  54498, 164469, ..., 120572, 156637,  77079],
+       [ 81803, 199415,   9542, ..., 120313,  14277, 151248],
+       [ 68675,  67283, 148842, ...,  45229,  44513, 103468],
+       ...,
+       [159667, 151749, 205562, ..., 206223, 212545,  91545],
+       [125190, 149107, 141092, ..., 232619, 232619, 232619],
+       [115429, 185167, 196507, ..., 115152, 144918, 200191]])
+       
+In [20]: age[:100]
+Out[20]: 
+array(['34', '32', '42', '32', '38', '34', '46', '34', '30', '35', '32',
+       '24', '32', '33', '37', '50', '38', '36', '42', '32', '31', '36',
+       '39', '32', '30', '38', '31', '29', '28', '28', '31', '38', '32',
+       '31', '26', '31', '41', '32', '29', '39', '30', '27', '34', '42',
+       '23', '32', '34', '32', '37', '28', '29', '42', '33', '40', '30',
+       '26', '28', '36', '22', '31', '32', '47', '35', '42', '28', '29',
+       '31', '27', '35', '48', '40', '27', '18', '31', '24', '23', '38',
+       '19', '55', '22', '27', '27', '17', '27', '43', '22', '29', '42',
+       '34', '32', '23', '20', '40', '37', '37', '35', '43', '22', '12',
+       '28'])
+```
+
+
+```markdown
+tovalue = pickle.load(open('wv_dict','rb'))
+
+dd = pickle.load(open('tmp1','rb'))
+
+X = dd['X']
+age = np.array(dd['age'])
+
+然后在我们的数据集上试一下：
+
 
 ### fasttext存在的问题
 
