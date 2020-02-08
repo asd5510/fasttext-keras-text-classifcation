@@ -241,6 +241,7 @@ MASK方式是因为最近大热的bert、transformer的出现而引人关注。�
 
 keras中提供了带mask的Embedding。介绍一下keras Embedding的mask_zero机制，经典的使用场景是在LSTM上，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的，为此我们还需要自定义一个average-pooling layer来接受mask的传参并进行处理。
 
+	keras官方文档的解释：mask_zero: 是否把 0 看作为一个应该被遮蔽的特殊的 "padding" 值。 这对于可变长的 循环神经网络层 十分有用。 如果设定为 True，那么接下来的所有层都必须支持 masking，否则就会抛出异常。 如果 mask_zero 为 True，作为结果，索引 0 就不能被用于词汇表中 （input_dim 应该与 vocabulary + 1 大小相同）。
 
 ```python
 from keras import backend as K
@@ -274,6 +275,8 @@ class MyMeanPool(Layer):
         return tuple(output_shape)
 ```
 
+上边是一个典型的keras自定义layer的方法，继承keras的Layer类，然后复写call()方法来实现该层的距离逻辑，注意此处传参多了一个mask，这里的mask来自于上边Embedding Layer的mask，mask的shape同input sequence length相同，它会对编号0的部分mask置位为0，其余置为1。所以我们直接通过x = x * mask，将PAD符号对应的embedding置为全0向量。
+
 然后我们将代码稍作修改：
 
 ```python
@@ -287,26 +290,51 @@ model.add(Dense(CLASS_NUM, activation='softmax'))
 model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
 ```
 
+然后我们再来验证一下是否生效，方法很简单，我们将不同长度的相同文本输入，看输出的结果是否一致：
+
+```python
+#未使用MASK
+In [30]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹')), 3) 
+Out[30]: 
+array([[18.        , 17.        , 20.        ,  0.0279202 ,  0.02749163,
+         0.02700286]])
+
+In [31]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹 皱纹 皱纹 皱纹')), 3) 
+Out[31]: 
+array([[18.        , 20.        , 17.        ,  0.02260662,  0.02230301,
+         0.02202889]])
+	 
+#使用MASK
+In [30]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹')), 3) 
+Out[30]: 
+array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
+         0.057345204]])
+
+In [31]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹 皱纹 皱纹 皱纹')), 3) 
+Out[31]: 
+array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
+         0.057345204]])
+```
+
+可以看到未使用MASK的版本，虽然同样的词汇，不同长度预测的结果不同，就是因为PAD的embedding也参与计算了。而下边使用MASK的版本相同的词汇不管长度多长，结果都是一样的，因为参与average-pooling的都是同一个词汇。
+另外也能看到下边使用MASK的版本对于预测短文本的效果好了不少。
 
 
 我猜想是否是因为它们处理变长文本的方式不同导致的，CNN会将所有变长文本padding到最长文本的长度，所以短文本的空白部分其实是有填充的。而Tgrocery和Fasttext直接构建一个BOW的模型(Fasttext的BOW是词向量的叠加，此外fasttext是不关心一个句子的长度的，无论多长都会用avg-pooling来处理它，因此不存在CNN遇到的一些padding的问题)，因此短文本的BOW就更纯净。简单说就是padding操作实际给短文本添加了白噪声，使得模型不会对短文本有偏。
 	回头看这里又有两个截然不同的观点，后边我做keras-fasttext实验的时候发现简单的zero-padding有很多问题(这种padding引入的噪声非常大)，然而这里CNN就是用了zero-padding(keras.preprocessing.sequence.pad_sequences)才使得不会对短文本置信度有偏。并且既然keras提供这个库表明存在即是合理的。这两种观点我看起来都有道理，还是需要根据实际情况决定吧。
 fasttext有明显的对短文本概率高的倾向了，因为fasttext是直接粗暴做avg-pooling后就softmax：
 
-在softmax的场景下，embedding加mask非常重要，如果不加mask短文本结果会非常差！终于验证了embedding mask的意义，以及fasttext为什么work well的原因：
- 
-model相比mdelC只是去掉了mask。
- 
+
+我们也可以从一些相关文章中找到一致的看法： 
+
+```markdown
 This can actually cause a fairly substantial fluctuation in performance in some networks. Suppose that instead of a convnet, we feed the embeddings to a deep averaging network. Then the varying number of nonzero pad vectors (according to which training batch the example is assigned in SGD) will very much affect the value of the average embedding. I've seen this cause a variation of up to 3% accuracy on text classification tasks. One possible remedy is to set the value of the embedding for the pad index to zero explicitly between each backprop step during training. This is computationally kind of wasteful (and also requires explicitly feeding the number of nonzero embeddings in each sample to the network), but it does the trick. I would like to see a feature like Torch's LookupTableMaskZero as well.
-这里也提到实在不行就每次将padding emb强制设置为0，否则用mask是最好的。
-	最后说下keras Embedding的mask_zero机制，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的。
- 
-经典的例子是后边接个LSTM：
 
+hanxiao在pooling的设计介绍中也提到：
+I say almost, as one has to be careful with the padded symbols when dealing with a batch of sequences of different lengths. Those paddings should never be involved in the calculation. Tiny details, yet people often forget about them.
+```
+上边提到实在不行就每次将padding emb强制设置为0，否则用mask是最好的。
 
-
-
- 
 
 ### fasttext做回归的实验
 
