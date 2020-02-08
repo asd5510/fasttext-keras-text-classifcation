@@ -377,13 +377,59 @@ model.add(Dense(CLASS_NUM, activation='softmax'))
 model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
 ```
 
-不管是去除低频词还是增加emb len，max-pooling的效果就是不如mean-pooling。难道这也是为什么fasttext用mean-pooling的原因？这里有个max-pooling很大的问题，每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这对于没有pre-train的wordVec是难以训练的。
-Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？https://github.com/tensorflow/tensorflow/issues/16028。可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如：
- 
-可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。
+写好后测试一下，整体准确率比起average-pooling变差了。我最初怀疑原因在于emb_size=80太小了，因为训练样本都是长句子，如果emb len太短的话max-pooling后很多词汇没有表达机会。于是试着把emb_size改成160 dim，但效果不明显。
+
+于是我发现另外一个问题，max-pooling很大的问题在于每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这对于没有pre-train的wordVec是难以训练的。而相比之前average-pooling每轮迭代所有的embedding都能参与更新。难道这就是为什么fasttext采用average-pooling的原因？
+
+查阅了一下资料，Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？ https://github.com/tensorflow/tensorflow/issues/16028。 里边提到可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如官方对于tf.max操作的梯度计算是这样的：
+
+```python
+def _MinOrMaxGrad(op, grad):
+  """Gradient for Min or Max. Amazingly it's precisely the same code."""
+  input_shape = array_ops.shape(op.inputs[0])
+  output_shape_kept_dims = math_ops.reduced_shape(input_shape, op.inputs[1])
+  y = op.outputs[0]
+  y = array_ops.reshape(y, output_shape_kept_dims)
+  grad = array_ops.reshape(grad, output_shape_kept_dims)
+
+  # Compute the number of selected (maximum or minimum) elements in each
+  # reduction dimension. If there are multiple minimum or maximum elements
+  # then the gradient will be divided between them.
+  indicators = math_ops.cast(math_ops.equal(y, op.inputs[0]), grad.dtype)
+  num_selected = array_ops.reshape(
+      math_ops.reduce_sum(indicators, op.inputs[1]),
+      output_shape_kept_dims)
+
+  return [math_ops.div(indicators, num_selected) * grad, None]
+```
+
+可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。否则就只有max值所在的embedding会得到梯度并更新。
+
 有两种方法改善tf.max的梯度影响范围，一种是自定义gradient计算函数，另一种是”softening” the max function，like the Lp-norm：
 
-于是自己实现了一个Lp-norm-pooling：
+```markdown
+The concept of Lp-norm seems to me like a natural approach for "softening" the max function. For your two number case, the Lp-norm is defined as
+y = (|a|^p + |b|^p)^(1/p)
+where p is a free parameter.
+
+The case p->∞ corresponds to
+y = tf.maximum(a,b)
+and the case p=2 corresponds to the familiar Eucledian distance. Perhaps there could be an intermediate p value which would suit your use case.
+```
+
+前者实现比较复杂，需要更改tensorflow自带的梯度计算函数。于是我按照第二个方案自己实现了一个Lp-norm-pooling：
+
+```python
+def call(self, x, mask=None):
+    if mask is not None:
+        mask = K.repeat(mask, x.shape[-1])
+        mask = tf.transpose(mask, [0,2,1])
+        mask = K.cast(mask, K.floatx())
+        x = x * mask
+        return K.sum(x**2, axis=self.axis) ** 0.5
+    else:
+        return K.sum(x**2, axis=self.axis) ** 0.5
+```
 
 这里超参数选p=2的就是最常见的L2-norm，发现当p比较大的时候无法收敛，怀疑是数值上溢，但是p=10就上溢也太夸张了吧。即使是L2-norm也很容易发散，应该不是好的pooling策略。
 换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train emb，效果明显好多了，并且不只是吃pre-train emb的老本，是可以在此基础上持续优化的。
