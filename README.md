@@ -126,10 +126,6 @@ model.add(Dense(30,activation='tanh'))
 
 model.add(Dense(CLASS_NUM, activation='softmax'))
 model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
-
-# 如果要做回归就改成下边的方式
-# model.add(Dense(1,activation='linear'))
-# model.compile(loss='mse',optimizer='Adam',metrics=['mse'])
 ```
 这基本就是fasttext的结构，只是我们多加了一个denseLayer，而fasttext是只有一层denLayer的。当然这里要求的数据输入形式也发生了变化，我们需要自己做文本数值化，并且fit模型的时候label和data分两个numpy array输入。为了完成文本数值化需要先遍历数据集构建映射字典：
 ```python
@@ -318,9 +314,24 @@ I say almost, as one has to be careful with the padded symbols when dealing with
 
 ### POOLING策略对比
 
-用MASK解决了PAD引入噪声的问题，然而又出现了新的问题，加了MASK之后我发现结果对于长文本的置信度会普遍偏低。
+用MASK解决了PAD引入噪声的问题，然而又出现了新的问题，加了MASK之后我发现结果对于长文本的置信度会普遍偏低：
 
-***********************举例
+```python
+In [30]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹')), 3) 
+Out[30]: 
+array([[18.        , 17.        , 20.        ,  0.0279202 ,  0.02749163,
+         0.02700286]])
+
+In [31]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹 皱纹 皱纹 皱纹')), 3) 
+Out[31]: 
+array([[18.        , 20.        , 17.        ,  0.02260662,  0.02230301,
+         0.02202889]])
+
+In [30]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹')), 3) 
+Out[30]: 
+array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
+         0.057345204]])
+```       
 
 原因是在于我们采取的average-pooling导致的。还记得上文我们提到过average-pooling的缺点，当文本非常长时，经过average-pooling后得到的embedding会失去特点，这一点换成max-pooling则不会出现，只要词汇的“个性”够突出，无论多长的文本max-pooling都能体现出该词汇。
 
@@ -464,7 +475,26 @@ max-pooling的优缺点跟average-pooling基本相反，缺点是全局的max-po
 
 ### 用fasttext-keras做回归的实验
 
-model.fit(X[:3000000], np.array(age[:3000000])[:,np.newaxis], validation_data=(X[3000000:], np.array(age[3000000:])[:,np.newaxis]), nb_epoch=3, batch_size=1024, )
+上边我们提到过，关于预测年龄究竟应该做分类还是回归模型？现在我们用keras实现了fasttext，可以很容易的做一个回归实验来对比看看：
+
+```python
+input = Input(shape=(MAX_WORDS,), name='input')
+emb = Embedding(VOCAB_SIZE,EMB_DIM,input_length=MAX_WORDS,mask_zero=True)(input)
+
+p1 =  MyMeanPool(axis=1)(emb)
+p2 =  MyMaxPool(axis=1)(emb)
+
+mer = concatenate([p1,p2])
+den = Dense(30, activation='tanh')(mer)
+out = Dense(1, activation='linear')(den)
+
+model=Model(inputs=[wide], outputs=[out])
+model.compile(optimizer='Adagrad', loss='mse', metrics=['mse'])
+
+model.fit(X[:3000000], np.array(age[:3000000])[:,np.newaxis], validation_data=(X[3000000:], np.array(age[3000000:])[:,np.newaxis]), nb_epoch=3, batch_size=1024)
+```
+只需要把模型的最后一层denseLayer的输出改为1，选线性激活函数。然后将loss换成MSE，也就是均方误差。最后label不需要做one-hot编码了，直接作为target就可以。
+
 
 
 对于regression效果不好的问题，一定程度是因为mse这个loss造成的，l2 loss的好处是收敛快，但是对离群值很敏感，相比之下smoothL1Loss是另一种选择。注意：smooth L1和L1-loss函数的区别在于，L1-loss在0点处导数不唯一，可能影响收敛。smooth L1的解决办法是在0点附近使用平方函数使得它更加平滑，如左图，所以右图对其求导不会有跳变点。
