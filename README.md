@@ -410,7 +410,7 @@ def _MinOrMaxGrad(op, grad):
 
 可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。否则就只有max值所在的embedding会得到梯度并更新。
 
-有两种方法改善tf.max的梯度影响范围，一种是自定义gradient计算函数，另一种是”softening” the max function，like the Lp-norm：
+有两种方法改善tf.max的梯度影响范围，一种是自定义gradient计算函数，另一种是”softening” the max function，比如有人提到可以不取max，而是按照大小先排序，然后对这个排序进行加权求和，从而使得所有的值都能够参与到运算中去。另外还有人提到将max function改成Lp-norm：
 
 ```markdown
 The concept of Lp-norm seems to me like a natural approach for "softening" the max function. For your two number case, the Lp-norm is defined as
@@ -422,7 +422,7 @@ y = tf.maximum(a,b)
 and the case p=2 corresponds to the familiar Eucledian distance. Perhaps there could be an intermediate p value which would suit your use case.
 ```
 
-前者实现比较复杂，需要更改tensorflow自带的梯度计算函数。于是我按照第二个方案自己实现了一个Lp-norm-pooling：
+前者实现比较复杂，需要更改tensorflow自带的梯度计算函数。于是我按照第二个方案实现了一个Lp-norm-pooling：
 
 ```python
 def call(self, x, mask=None):
@@ -444,7 +444,14 @@ def call(self, x, mask=None):
 
 于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
 
-**********************举例
+```markdown
+#max-pooling
+Epoch 1/1
+3000000/3000000 [==============================] - 444s 148us/step - loss: 3.5339 - acc: 0.1181 - val_loss: 3.3544 - val_acc: 0.1137
+#使用pre-train embedding的max-pooling
+Epoch 1/1
+3000000/3000000 [==============================] - 342s 114us/step - loss: 3.5083 - acc: 0.1259 - val_loss: 3.3296 - val_acc: 0.1222
+```
 
 当然，最后采用的做法还是ensemble的思路，如果两种方法各有千秋那么就都一起用，于是最后的方式是同时使用max-pooling和average-pooling，将它们的结果concat起来：
 
@@ -470,12 +477,14 @@ average-pooling的问题在于容易受到噪声干扰，对长文本pooling后�
 max-pooling的优缺点跟average-pooling基本相反，缺点是全局的max-pooling只有max部分的向量能够更新，因此训练过程收敛速度慢(可以使用pre-train embedding来缓解这个问题)。优点则是不太容易受到噪声干扰，并且对长文本的表达效果比较理想。另外max-pooling的emb_size不能太小，否则很多词汇根本没机会得到表达。 
 因此可以考虑结合average-pooling和max-pooling一起使用，max-pooling最好不要在全局范围做，参考CNN的pooling layer只是在2*2的格子中做max-pooling因此不会丧失太多信息。所以延伸出一些hierarchical pooling的策略：先在局部窗口内做max-pooling，最后在全局范围内做average-pooling，这些都是可以参考的做法。
 
-### fasttext做回归的实验
+### 用fasttext-keras做回归的实验
 
 model.fit(X[:3000000], np.array(age[:3000000])[:,np.newaxis], validation_data=(X[3000000:], np.array(age[3000000:])[:,np.newaxis]), nb_epoch=3, batch_size=1024, )
 
 
- 
+对于regression效果不好的问题，一定程度是因为mse这个loss造成的，l2 loss的好处是收敛快，但是对离群值很敏感，相比之下smoothL1Loss是另一种选择。注意：smooth L1和L1-loss函数的区别在于，L1-loss在0点处导数不唯一，可能影响收敛。smooth L1的解决办法是在0点附近使用平方函数使得它更加平滑，如左图，所以右图对其求导不会有跳变点。
 
- 
+试了所有的regression loss都没用，那可能的原因还是regression不合适，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，所以regression效果不佳。
+
+ ### 对embedding的分析
 
