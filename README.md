@@ -276,8 +276,9 @@ class MyMeanPool(Layer):
 ```
 
 上边是一个典型的keras自定义layer的方法，继承keras的Layer类，然后复写call()方法来实现该层的距离逻辑，注意此处传参多了一个mask，这里的mask来自于上边Embedding Layer的mask，mask的shape同input sequence length相同，它会对编号0的部分mask置位为0，其余置为1。所以我们直接通过x = x * mask，将PAD符号对应的embedding置为全0向量。
-(插一句题外话，除了上边这种自定义Layer的方法，tf还提供了lambda layer可以只需添加一个lambda表达式作为逻辑，比如keras.layers.Lambda(lambda wide: wide**2)，这个对于大多数简单逻辑更方便，毕竟很多自定义Layer的本质就只需要改写call()而已。附上一个condition_dropout的写法：
-input_cond_drop = keras.layers.Lambda(lambda x: K.switch(K.tf.count_nonzero(x)>5,Dropout(0.5)(x),x))(input))
+
+插一句题外话，除了上边这种自定义Layer的方法，tf还提供了lambda layer可以只需添加一个lambda表达式作为逻辑，比如keras.layers.Lambda(lambda wide: wide**2)，这个对于大多数简单逻辑更方便，毕竟很多自定义Layer的本质就只需要改写call()而已。附上一个condition_dropout的写法：
+input_cond_drop = keras.layers.Lambda(lambda x: K.switch(K.tf.count_nonzero(x)>5,Dropout(0.5)(x),x))(input)
 
 然后我们将代码稍作修改：
 
@@ -333,6 +334,8 @@ I say almost, as one has to be careful with the padded symbols when dealing with
 ### POOLING策略对比
 
 用MASK解决了PAD引入噪声的问题，然而又出现了新的问题，加了MASK之后我发现结果对于长文本的置信度会普遍偏低。
+
+***********************举例
 
 原因是在于我们采取的average-pooling导致的。还记得上文我们提到过average-pooling的缺点，当文本非常长时，经过average-pooling后得到的embedding会失去特点，这一点换成max-pooling则不会出现，只要词汇的“个性”够突出，无论多长的文本max-pooling都能体现出该词汇。
 
@@ -436,7 +439,12 @@ def call(self, x, mask=None):
 这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
 另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个好的pooling策略。
 
-于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train emb，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
+**********************举例
+
+
+于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
+
+**********************举例
 
 当然，最后采用的做法还是ensemble的思路，如果两种方法各有千秋那么就都一起用，于是最后的方式是同时使用max-pooling和average-pooling，将它们的结果concat起来：
 
@@ -455,6 +463,12 @@ modelC = Model(inputs=[input], outputs=[out])
 modelC.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
 ```
 需要注意的是由于我们之前用的是keras的Sequential序贯模型的写法，该写法虽然简单但是不支持一些复杂的设计，比如接收多输入的Layer。而此处我们需要一个concatenate()操作，因此将写法改成了函数式模型的写法。
+
+最后总结一下max-pooling和avearage-pooling各自的优缺点。
+
+average-pooling的问题在于容易受到噪声干扰，对长文本pooling后无法体现出差异化。优点则是训练收敛速度快，所有参与pooling的向量都能够得到更新。
+max-pooling的优缺点跟average-pooling基本相反，缺点是全局的max-pooling只有max部分的向量能够更新，因此训练过程收敛速度慢(可以使用pre-train embedding来缓解这个问题)。优点则是不太容易受到噪声干扰，并且对长文本的表达效果比较理想。另外max-pooling的emb_size不能太小，否则很多词汇根本没机会得到表达。 
+因此可以考虑结合average-pooling和max-pooling一起使用，max-pooling最好不要在全局范围做，参考CNN的pooling layer只是在2*2的格子中做max-pooling因此不会丧失太多信息。所以延伸出一些hierarchical pooling的策略：先在局部窗口内做max-pooling，最后在全局范围内做average-pooling，这些都是可以参考的做法。
 
 ### fasttext做回归的实验
 
