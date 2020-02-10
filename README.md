@@ -1,16 +1,23 @@
 # 关于fasttext的keras实现以及相关问题探讨
 
 fasttext是facebook开发的一款快速文本分类的工具。工具本身有很多限制，比如只能做分类不能做回归问题，比如pooling的方式只能使用avg-pooling的方式，只能针对char级别进行embedding，无法提取训练好的embedding向量等等。
-综合上述的原因，本篇探讨通过keras实现一个fasttext工具，并且探究其中涉及到的一些机器学习，文本建模相关问题的分析。
 
-***目录：
-	1) fasttext的基本原理
-	2) fasttext的简单实践
-	3) keras的fasttext实现
-	4) PAD的问题和MASK的意义
-	5) POOLING策略对比
-	6) 用fasttext-keras做回归的实验
-	7) 对embedding的分析
+综合上述的原因，本篇在一个通过用户文本识别年龄的任务背景下，探讨通过keras实现一个fasttext工具，并且探究其中涉及到的一些机器学习，文本建模相关问题的分析。
+
+**目录：**
+**1) fasttext的基本原理**
+
+**2) fasttext的简单实践**
+
+**3) keras的fasttext实现**
+
+**4) PAD的问题和MASK的意义**
+
+**5) POOLING策略对比**
+
+**6) 用fasttext-keras做回归的实验**
+
+**7) 对embedding的分析**
 
 ## fasttext的基本原理
 
