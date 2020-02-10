@@ -314,23 +314,25 @@ I say almost, as one has to be careful with the padded symbols when dealing with
 
 ### POOLING策略对比
 
-用MASK解决了PAD引入噪声的问题，然而又出现了新的问题，加了MASK之后我发现结果对于长文本的置信度会普遍偏低：
+用MASK解决了PAD引入噪声的问题，然而又出现了新的问题，加了MASK之后我发现结果对于长文本的分类准确度会下降，并且置信度也普遍偏低：
 
 ```python
-In [30]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹')), 3) 
+In [29]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹')), 3) 
+Out[29]: 
+array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
+         0.057345204]])
+	 
+In [30]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹 心事 聊聊 好玩 好歌 老歌 总能 事儿 夫妻')), 3) 
 Out[30]: 
-array([[18.        , 17.        , 20.        ,  0.0279202 ,  0.02749163,
+array([[56.        , 54.        , 20.        ,  0.0279202 ,  0.02749163,
          0.02700286]])
 
-In [31]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹 皱纹 皱纹 皱纹')), 3) 
+In [31]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹 心事 聊聊 好玩 好歌 老歌 总能 事
+    ...: 儿 夫妻 经典 人生 在线 资讯 合作 本地 慰藉 诉说 之间 一些 技巧 感悟 商务 请点 家庭
+    ...:  吉林 幸福 怡然自得 随遇而安 点击 按钮 免费听 阅读 夜深 顺其自然 新鲜事 下方 关注 聊以 太极拳')), 3) 
 Out[31]: 
 array([[18.        , 20.        , 17.        ,  0.02260662,  0.02230301,
          0.02202889]])
-
-In [30]: np.apply_along_axis(topn, 1, model.predict(to_id('皱纹')), 3) 
-Out[30]: 
-array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
-         0.057345204]])
 ```       
 
 原因是在于我们采取的average-pooling导致的。还记得上文我们提到过average-pooling的缺点，当文本非常长时，经过average-pooling后得到的embedding会失去特点，这一点换成max-pooling则不会出现，只要词汇的“个性”够突出，无论多长的文本max-pooling都能体现出该词汇。
@@ -435,7 +437,7 @@ def call(self, x, mask=None):
 这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
 另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个好的pooling策略。
 
-**********************
+
 
 
 于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
@@ -522,8 +524,21 @@ array([[ 0.16801895,  0.4502973 ,  0.39897776,  0.10491236,  0.23625815,
 ```
 可以看到取max-pooling，因此随着文本长度的增加，max-pooling后的embedding的正向量比例越来越高。
 
-而由于我的训练样本中绝大部分都是长文本，因此模型接触到的max-pooling后的embedding很少有负值，然而短文本的pooling结果中大量都是负值，这对于模型来说是很陌生的，因此分类效果并不好，我们可以从另一个角度证明：
+而由于我的训练样本中绝大部分都是长文本，因此模型接触到的max-pooling后的embedding很少有负值，然而短文本的pooling结果中大量都是负值，这对于模型来说是很陌生的，因此分类效果并不好。我们可以从另一个角度看，短文本填充为长文本后的变化：
 
+```python
+In [9]: np.apply_along_axis(topn, 1, model.predict(to_id('太极拳')), 3)
+Out[9]: 
+array([[13.        , 27.        , 14.        ,  0.07882072,  0.07579017,
+         0.07078231]])
+
+In [10]: np.apply_along_axis(topn, 1, model.predict(to_id('心事 聊聊 好玩 好歌 总能 事
+    ...: 儿 夫妻 经典 人生 在线 资讯 合作 本地 慰藉 诉说 之间 一些 技巧 感悟 商务 请点 家庭
+    ...:  吉林 幸福 点击 按钮 免费听 阅读 夜深 新鲜事 下方 关注 聊以 太极拳')), 3)
+Out[10]: 
+array([[53.        , 55.        , 56.        , 4.96205091e-02,
+        4.73697968e-02, 4.54674773e-02]])
+```
 
 当然，最后采用的做法还是ensemble的思路，如果两种方法各有千秋那么就都一起用，于是最后的方式是同时使用max-pooling和average-pooling，将它们的结果concat起来：
 
