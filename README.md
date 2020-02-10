@@ -622,7 +622,12 @@ Out[122]: array([[35.35544]], dtype=float32)
 还是上边同样的问题如果做分类模型，预测为30岁与预测为60岁的loss是差不多的,因为loss的来源都是从30岁的softmax归一化概率决定的。
 
 考虑到上边的情况，似乎使用L1 loss代替MSE是一种选择。L1 loss相比MSE不会对差异那么敏感。对上边的例子预测为60岁的loss是30，是预测为31岁的30倍，相比900倍要缓和很多。
-而在工程上，相比之下smoothL1Loss是一种更优的选择。注意smooth L1和L1-loss函数的区别在于，L1-loss在0点处导数不唯一，可能影响收敛。smooth L1的解决办法是在0点附近使用平方函数使得它更加平滑，如左图，所以右图对其求导不会有跳变点。
+而在工程上，相比之下smoothL1Loss是一种更优的选择。注意smooth L1和L1-loss函数的区别在于，L1-loss在0点处导数不唯一，可能影响收敛。smooth L1的解决办法是在0点附近使用平方函数使得它更加平滑，如左图，所以右图对其求导不会有跳变点：
+
+
+ ![smoothL1](smoothL1.png "smooth L1 loss")
+ 
+由于keras自带的loss中并没有包含smooth l1-loss，因此此处需要涉及到自定义loss函数，方法也比较简单，我们自己定义一个函数接收y_true,y_pred两个入参，然后自定义计算loss的方法。最后在model.compile()中将自定义loss函数名作为入参传进去就可以：
 
 ```python
 HUBER_DELTA = 0.5
