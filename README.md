@@ -87,7 +87,7 @@ P@1: 0.12258363063695123
 R@1: 0.12239581004504142
 Number of examples: 334955
 ```
-运行结果如上图，我们再直观测试一下同年龄相关的词汇看模型预测的怎么样：
+运行结果如上图，由于本身数据集质量不高(噪声多且同target并不高度相关)，加上精确预测年龄的高难度，因此从top1准确率看较低。我们再直观测试一下同年龄相关的词汇看模型预测的怎么样：
 
 ```python
 In [4]: classifier.predict_proba(['京剧'])
@@ -114,6 +114,7 @@ fasttext实现简单，速度快。但正是其高度封装，缺乏定制能力
 
 
 2） fasttext默认使用average-pooling作为pooling策略，然而这个策略十分简单，并且存在一些问题，却无法更改。
+
 3）fasttext只能做分类，而在我们的任务里，分类并不一定是最优方案。预测年龄也可以当做一个回归问题。因为年龄是具有连续性的，做回归任务能让模型很容易的学到年龄的连续性，而分类任务上，一个label=29岁的样本，预测为27岁和预测为72岁的loss是一样的，这有点不太合理。
 
 由于以上三点，我打算自己用keras写一个fasttext的实现，从而能够充分的定制化。
@@ -238,7 +239,7 @@ array([[61.        , 64.        , 17.        , 1.92667879e-02,
 
 MASK方式是因为最近大热的bert、transformer的出现而引人关注。一篇很好的文章在https://leemeng.tw/neural-machine-translation-with-transformer-and-tensorflow2.html 其中详细描述了transformer中mask的作用和实现方式。在 Transformer 裡頭有兩種 masks：padding mask和look ahead mask。前者就是我们需要的。
 
-keras中提供了带mask的Embedding。介绍一下keras Embedding的mask_zero机制，经典的使用场景是在LSTM上，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的。keras官方文档的解释：mask_zero: 是否把 0 看作为一个应该被遮蔽的特殊的 "padding" 值。 这对于可变长的 循环神经网络层 十分有用。 如果设定为 True，那么接下来的所有层都必须支持 masking，否则就会抛出异常。 如果 mask_zero 为 True，作为结果，索引 0 就不能被用于词汇表中 （input_dim 应该与 vocabulary + 1 大小相同）。
+keras中提供了带mask的Embedding。介绍一下keras Embedding的mask_zero机制，经典的使用场景是在LSTM上，它不会return [0,..0] vec for symbol 0，相反，Embedding layer的参数是不受影响继续训练的，mask_zero只是给了一个mask给后续的layer用，所以后续layer没有使用mask的话是会报错的。keras官方文档的解释：mask_zero: 是否把 0 看作为一个应该被遮蔽的特殊的 "padding" 值。 这对于可变长的循环神经网络层十分有用。 如果设定为True，那么接下来的所有层都必须支持 masking，否则就会抛出异常。 如果 mask_zero 为 True，作为结果，索引 0 就不能被用于词汇表中（input_dim 应该与 vocabulary + 1 大小相同）。
 
 综上，我们需要自定义一个average-pooling layer来接受mask的传参并进行处理：
 
@@ -276,7 +277,7 @@ class MyMeanPool(Layer):
 
 上边是一个典型的keras自定义layer的方法，继承keras的Layer类，然后复写call()方法来实现该层的距离逻辑，注意此处传参多了一个mask，这里的mask来自于上边Embedding Layer的mask，mask的shape同input sequence length相同，它会对编号0的部分mask置位为0，其余置为1。所以我们直接通过x = x * mask，将PAD符号对应的embedding置为全0向量。
 
-插一句题外话，除了上边这种自定义Layer的方法，tf还提供了lambda layer可以只需添加一个lambda表达式作为逻辑，比如keras.layers.Lambda(lambda wide: wide**2)，这个对于大多数简单逻辑更方便，毕竟很多自定义Layer的本质就只需要改写call()而已。附上一个condition_dropout的写法：
+*插一句题外话，除了上边这种自定义Layer的方法，tf还提供了lambda layer可以只需添加一个lambda表达式作为逻辑，比如keras.layers.Lambda(lambda wide: wide**2)，这个对于大多数简单逻辑更方便，毕竟很多自定义Layer的本质就只需要改写call()而已。比如一个condition_dropout的写法：
 input_cond_drop = keras.layers.Lambda(lambda x: K.switch(K.tf.count_nonzero(x)>5,Dropout(0.5)(x),x))(input)
 
 然后我们将代码稍作修改：
@@ -530,7 +531,6 @@ def call(self, x, mask=None):
 另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个太好的pooling策略。
 
 另外换一种方式验证，我使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率相对较低。
-
 
 
 
