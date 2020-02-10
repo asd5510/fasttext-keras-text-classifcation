@@ -3,7 +3,16 @@
 fasttext是facebook开发的一款快速文本分类的工具。工具本身有很多限制，比如只能做分类不能做回归问题，比如pooling的方式只能使用avg-pooling的方式，只能针对char级别进行embedding，无法提取训练好的embedding向量等等。
 综合上述的原因，本篇探讨通过keras实现一个fasttext工具，并且探究其中涉及到的一些机器学习，文本建模相关问题的分析。
 
-### fasttext的基本原理
+目录：
+#### fasttext的基本原理
+#### fasttext的简单实践
+#### keras的fasttext实现
+#### PAD的问题和MASK的意义
+#### POOLING策略对比
+#### 用fasttext-keras做回归的实验
+#### 对embedding的分析
+
+## fasttext的基本原理
 
 fastText简而言之，就是把文档中所有词通过lookup table映射为一个embedding向量，经过avg-pooling后直接经过2层全连接层得到分类结果。本质十分类似于一个BOW模型，但由于使用了词向量因此效果更好。同时由于使用pooling的方式因此对词序不敏感，仅通过n-gram的方式捕捉一定程度的context。
 
@@ -16,7 +25,7 @@ fastText简而言之，就是把文档中所有词通过lookup table映射为一
 然而Fasttext的word_ngrams参数很大影响了效率，实测当词库比较大的话如果2-gram就会非常慢了(主要是保存模型特别慢，2-gram的参数非常多了)，而实际1-gram在多迭代几次后就能达到很好的效果，多数情况下没必要上2-gram。这个同文本分类任务的特性有关：刘至远提到像文本分类这样的任务，如果是长文本，即使用BOW也能做很不错的效果。另外项亮说到文本分类大部分情况下是个简单的线性问题，因为词汇本来就是高度凝结智慧和信息量的产物了，所以多层网络没太多意义。
 我的理解是文本分类任务由于很多情况下对不需要捕捉高级的语法关系，上下文语境等等，而只需要做词汇匹配就行。因此长文本下BOW不会太过稀疏，效果也会不错。
 
-### fasttext的简单实践
+## fasttext的简单实践
 facebook最早推出的是c++的版本，后续封装了python版本，实测python版本的运行效率也很高，因此本文采用的是fasttext的python版本。安装方式通过pip就能完成，我使用的是0.8.3版本，安装的时候需要加上版本号pip install fasttext==0.8.3，同时要求预先安装Cython。我们要做一个简单的分类任务，根据用户关注的文本来预测用户的年龄，简单的demo如下：
 ```python
 import fasttext as ft
@@ -100,7 +109,7 @@ fasttext实现简单，速度快。但正是其高度封装，缺乏定制能力
 
 由于以上三点，我打算自己用keras写一个fasttext的实现，从而能够充分的定制化。
 
-### keras的fasttext实现
+## keras的fasttext实现
 
 第一版模型非常简单，使用keras的Sequential模型搭建方式：
 ```python
@@ -207,7 +216,7 @@ array([[61.        , 64.        , 17.        , 1.92667879e-02,
         1.70407854e-02, 1.66415088e-02]])
 ```
 
-### PAD的问题和MASK的意义
+## PAD的问题和MASK的意义
 
 
 经过对上边模型结果的测试，发现对于短文本的预测效果不太对，但是人为增长文本后效果又比较正常了，这是为什么呢？
@@ -312,7 +321,7 @@ This can actually cause a fairly substantial fluctuation in performance in some 
 I say almost, as one has to be careful with the padded symbols when dealing with a batch of sequences of different lengths. **Those paddings should never be involved in the calculation.** Tiny details, yet people often forget about them.
 
 
-### POOLING策略对比
+## POOLING策略对比
 
 用MASK解决了PAD引入噪声的问题，然而又出现了新的问题，加了MASK之后我发现结果对于长文本的分类准确度会下降，并且置信度也普遍偏低：
 
@@ -542,7 +551,7 @@ max-pooling的优缺点跟average-pooling基本相反，缺点是全局的max-po
 
 因此可以考虑结合average-pooling和max-pooling一起使用，max-pooling最好不要在全局范围做，参考CNN的pooling layer只是在2*2的格子中做max-pooling因此不会丧失太多信息。所以延伸出一些hierarchical pooling的策略：先在局部窗口内做max-pooling，最后在全局范围内做average-pooling，这些都是可以参考的做法。
 
-### 用fasttext-keras做回归的实验
+## 用fasttext-keras做回归的实验
 
 上边我们提到过，关于预测年龄究竟应该做分类还是回归模型？现在我们用keras实现了fasttext，可以很容易的做一个回归实验来对比看看：
 
@@ -619,7 +628,7 @@ model.compile(optimizer='Adagrad', loss=smoothL1, metrics=['mse'])
 
 3）regression还有一些别的问题，比如MSE loss对于大值是有偏的(mean squared logarithmic error能够缓解)。另外regression只能输出一个预测值，而classification是能够输出所有类别的概率分布的，相比之下后者输出了更多信息，比如我们可以使用top3 accuracy进行评估，可以了解到所有年龄值的预测概率。
 
-### 对embedding的分析
+## 对embedding的分析
 
 ```markdown
 60岁老年人关键词：
