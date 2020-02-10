@@ -305,11 +305,11 @@ array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
 
 我们也可以从一些相关文章中找到一致的看法： 
 
-This can actually cause a fairly substantial fluctuation in performance in some networks. Suppose that instead of a convnet, we feed the embeddings to a deep averaging network. Then the varying number of nonzero pad vectors (according to which training batch the example is assigned in SGD) will very much affect the value of the average embedding. I've seen this cause a variation of up to 3% accuracy on text classification tasks. One possible remedy is to set the value of the embedding for the pad index to zero explicitly between each backprop step during training. This is computationally kind of wasteful (and also requires explicitly feeding the number of nonzero embeddings in each sample to the network), but it does the trick. I would like to see a feature like Torch's LookupTableMaskZero as well.
+This can actually cause a fairly substantial fluctuation in performance in some networks. Suppose that instead of a convnet, we feed the embeddings to a deep averaging network. Then the varying number of nonzero pad vectors (according to which training batch the example is assigned in SGD) will very much affect the value of the average embedding. I've seen this cause a variation of up to 3% accuracy on text classification tasks. **One possible remedy is to set the value of the embedding for the pad index to zero explicitly between each backprop step during training.** This is computationally kind of wasteful (and also requires explicitly feeding the number of nonzero embeddings in each sample to the network), but it does the trick. I would like to see a feature like Torch's LookupTableMaskZero as well.
 
 上边提到实在不行就每次将padding emb强制设置为0，否则用mask是最好的。另外hanxiao在pooling的设计介绍中也提到：
 
-I say almost, as one has to be careful with the padded symbols when dealing with a batch of sequences of different lengths. Those paddings should never be involved in the calculation. Tiny details, yet people often forget about them.
+I say almost, as one has to be careful with the padded symbols when dealing with a batch of sequences of different lengths. **Those paddings should never be involved in the calculation.** Tiny details, yet people often forget about them.
 
 
 ### POOLING策略对比
@@ -336,11 +336,11 @@ array([[18.        , 20.        , 17.        ,  0.02260662,  0.02230301,
 ```       
 这是一个比较现实的问题，从人的角度看，上边的长文本虽然包含了不少噪声（这是数据来源的性质决定的），但是其实提供了更多信息量来证明这是一个老年用户，比如：皱纹、老歌、怡然自得、随遇而安、顺其自然、太极拳。相反短文本仅仅包含一个词汇反倒显得不那么确定。这是因为这里噪声并不影响人的判断，我们能够分辨出这其中很多词都是噪声词，并不能反映出用户的年龄，但是目前的模型却对长文本的分类效果不佳。
 
-这里的原因是在于我们采取的average-pooling导致的。还记得上文我们提到过average-pooling的缺点，当文本非常长时，经过average-pooling后得到的embedding会失去特点，并且容易受到噪声的干扰。这一点换成max-pooling则不会出现，只要词汇的“个性”够突出，无论多长的文本max-pooling都能体现出该词汇。
+这里的原因是在于我们采取的average-pooling导致的。还记得上文我们提到过average-pooling的缺点，当文本非常长时，经过average-pooling后得到的embedding会失去特点，并且容易受到噪声的干扰。而看起来这一点换成max-pooling则不会出现，因为只要词汇的“个性”够突出，无论多长的文本max-pooling都能体现出该词汇。
 
 而恰恰不好的一点在于我们的数据集中噪声词非常多，很多词汇完全看不出跟用户的年龄的关系。在这种情况下使用average-pooling不仅仅是长文本置信度低了，而是可能根本就预测不准。
 
-于是解决方法就比较明确了，我们将average-pooling换成max-pooling看看。如果不考虑MASK的话，那么只要GlobalAveragePooling1D()换成GlobalMaxPooling1D())
+于是为了探寻解决方法，我们将average-pooling换成max-pooling看看。如果不考虑MASK的话，那么只要GlobalAveragePooling1D()换成GlobalMaxPooling1D())
 就行了，但这里棘手的问题在于由于MASK的方案需要保持，所以还是需要自定义一个能够处理mask的max-pooling layer。并且这个带mask的max-pooling layer的设计会复杂一些。由于是要取max，那么为了让PAD符号对应的向量不产生的影响，应该将这个向量转变为一个最负的向量，这样取max操作时才不会有影响：
 
 ```python
@@ -381,78 +381,24 @@ model.add(Dense(CLASS_NUM, activation='softmax'))
 model.compile(loss='categorical_crossentropy',optimizer='Adam',metrics=['accuracy'])
 ```
 
-写好后测试一下，整体准确率比起average-pooling变差了。我最初怀疑原因在于emb_size=80太小了，因为训练样本都是长句子，如果emb len太短的话max-pooling后很多词汇没有表达机会。于是试着把emb_size改成160 dim，但效果不明显。
-
-于是我发现另外一个问题，max-pooling很大的问题在于每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这对于没有pre-train的wordVec是难以训练的。而相比之前average-pooling每轮迭代所有的embedding都能参与更新。难道这就是为什么fasttext采用average-pooling的原因？
-
-查阅了一下资料，Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？ https://github.com/tensorflow/tensorflow/issues/16028。 里边提到可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如官方对于tf.max操作的梯度计算是这样的：
+写好后测试一下，这回如我们上边分析的那样，长文本分类效果不佳的问题改善了，但是短文本分类效果却又变差了。：(
 
 ```python
-def _MinOrMaxGrad(op, grad):
-  """Gradient for Min or Max. Amazingly it's precisely the same code."""
-  input_shape = array_ops.shape(op.inputs[0])
-  output_shape_kept_dims = math_ops.reduced_shape(input_shape, op.inputs[1])
-  y = op.outputs[0]
-  y = array_ops.reshape(y, output_shape_kept_dims)
-  grad = array_ops.reshape(grad, output_shape_kept_dims)
+In [9]: np.apply_along_axis(topn, 1, model.predict(to_id('太极拳')), 3)
+Out[9]: 
+array([[13.        , 27.        , 14.        ,  0.07882072,  0.07579017,
+         0.07078231]])
 
-  # Compute the number of selected (maximum or minimum) elements in each
-  # reduction dimension. If there are multiple minimum or maximum elements
-  # then the gradient will be divided between them.
-  indicators = math_ops.cast(math_ops.equal(y, op.inputs[0]), grad.dtype)
-  num_selected = array_ops.reshape(
-      math_ops.reduce_sum(indicators, op.inputs[1]),
-      output_shape_kept_dims)
-
-  return [math_ops.div(indicators, num_selected) * grad, None]
+In [10]: np.apply_along_axis(topn, 1, model.predict(to_id('心事 聊聊 好玩 好歌 总能 事
+    ...: 儿 夫妻 经典 人生 在线 资讯 合作 本地 慰藉 诉说 之间 一些 技巧 感悟 商务 请点 家庭
+    ...:  吉林 幸福 点击 按钮 免费听 阅读 夜深 新鲜事 下方 关注 聊以 太极拳')), 3)
+Out[10]: 
+array([[53.        , 55.        , 56.        , 4.96205091e-02,
+        4.73697968e-02, 4.54674773e-02]])
 ```
+而从整体准确率上看，max-pooling跟average-pooling相比不相上下。
 
-可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。否则就只有max值所在的embedding会得到梯度并更新。
-
-有两种方法改善tf.max的梯度影响范围，一种是自定义gradient计算函数，另一种是”softening” the max function，比如有人提到可以不取max，而是按照大小先排序，然后对这个排序进行加权求和，从而使得所有的值都能够参与到运算中去。另外还有人提到将max function改成Lp-norm：
-
-```markdown
-The concept of Lp-norm seems to me like a natural approach for "softening" the max function. For your two number case, the Lp-norm is defined as
-y = (|a|^p + |b|^p)^(1/p)
-where p is a free parameter.
-
-The case p->∞ corresponds to
-y = tf.maximum(a,b)
-and the case p=2 corresponds to the familiar Eucledian distance. Perhaps there could be an intermediate p value which would suit your use case.
-```
-
-前者实现比较复杂，需要更改tensorflow自带的梯度计算函数。于是我按照第二个方案实现了一个Lp-norm-pooling：
-
-```python
-def call(self, x, mask=None):
-    if mask is not None:
-        mask = K.repeat(mask, x.shape[-1])
-        mask = tf.transpose(mask, [0,2,1])
-        mask = K.cast(mask, K.floatx())
-        x = x * mask
-        return K.sum(x**2, axis=self.axis) ** 0.5
-    else:
-        return K.sum(x**2, axis=self.axis) ** 0.5
-```
-
-这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
-另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个好的pooling策略。
-
-
-
-
-于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
-
-```markdown
-#max-pooling
-Epoch 1/1
-3000000/3000000 [==============================] - 444s 148us/step - loss: 3.5339 - acc: 0.1181 - val_loss: 3.3544 - val_acc: 0.1137
-#使用pre-train embedding的max-pooling
-Epoch 1/1
-3000000/3000000 [==============================] - 342s 114us/step - loss: 3.5083 - acc: 0.1259 - val_loss: 3.3296 - val_acc: 0.1222
-```
-
-另外我还发现可能的一个原因，为什么max-pooling对于短文本的分类效果不佳，是因为短文本没有参与训练导致的。
+为什么max-pooling对于短文本的分类效果不佳，我发现一个可能的原因是因为短文本没有参与训练导致的。
 首先我们来看一下max-pooling后的具体向量，为此我们需要定义一个tmp model，让这个model的输出是max-pooling的那一层：
 
 ```python
@@ -525,21 +471,78 @@ array([[ 0.16801895,  0.4502973 ,  0.39897776,  0.10491236,  0.23625815,
 ```
 可以看到取max-pooling，因此随着文本长度的增加，max-pooling后的embedding的正向量比例越来越高。
 
-而由于我的训练样本中绝大部分都是长文本，因此模型接触到的max-pooling后的embedding很少有负值，然而短文本的pooling结果中大量都是负值，这对于模型来说是很陌生的，因此分类效果并不好。我们可以从另一个角度看，短文本填充为长文本后的变化：
+而由于我的训练样本中绝大部分都是长文本，因此模型接触到的max-pooling后的embedding很少有负值，然而短文本的pooling结果中大量都是负值，这对于模型来说是很陌生的，因此分类效果并不好。
+
+并且我发现另外一个问题，max-pooling很大的问题在于每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这对于没有pre-train的wordVec是难以训练的。而相比之前average-pooling每轮迭代所有的embedding都能参与更新。难道这就是为什么fasttext采用average-pooling的原因？
+
+查阅了一下资料，Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？ https://github.com/tensorflow/tensorflow/issues/16028。 里边提到可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如官方对于tf.max操作的梯度计算是这样的：
 
 ```python
-In [9]: np.apply_along_axis(topn, 1, model.predict(to_id('太极拳')), 3)
-Out[9]: 
-array([[13.        , 27.        , 14.        ,  0.07882072,  0.07579017,
-         0.07078231]])
+def _MinOrMaxGrad(op, grad):
+  """Gradient for Min or Max. Amazingly it's precisely the same code."""
+  input_shape = array_ops.shape(op.inputs[0])
+  output_shape_kept_dims = math_ops.reduced_shape(input_shape, op.inputs[1])
+  y = op.outputs[0]
+  y = array_ops.reshape(y, output_shape_kept_dims)
+  grad = array_ops.reshape(grad, output_shape_kept_dims)
 
-In [10]: np.apply_along_axis(topn, 1, model.predict(to_id('心事 聊聊 好玩 好歌 总能 事
-    ...: 儿 夫妻 经典 人生 在线 资讯 合作 本地 慰藉 诉说 之间 一些 技巧 感悟 商务 请点 家庭
-    ...:  吉林 幸福 点击 按钮 免费听 阅读 夜深 新鲜事 下方 关注 聊以 太极拳')), 3)
-Out[10]: 
-array([[53.        , 55.        , 56.        , 4.96205091e-02,
-        4.73697968e-02, 4.54674773e-02]])
+  # Compute the number of selected (maximum or minimum) elements in each
+  # reduction dimension. If there are multiple minimum or maximum elements
+  # then the gradient will be divided between them.
+  indicators = math_ops.cast(math_ops.equal(y, op.inputs[0]), grad.dtype)
+  num_selected = array_ops.reshape(
+      math_ops.reduce_sum(indicators, op.inputs[1]),
+      output_shape_kept_dims)
+
+  return [math_ops.div(indicators, num_selected) * grad, None]
 ```
+
+可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。否则就只有max值所在的embedding会得到梯度并更新。
+
+有两种方法改善tf.max的梯度影响范围，一种是自定义gradient计算函数，另一种是”softening” the max function，比如有人提到可以不取max，而是按照大小先排序，然后对这个排序进行加权求和，从而使得所有的值都能够参与到运算中去。另外还有人提到将max function改成Lp-norm：
+
+```markdown
+The concept of Lp-norm seems to me like a natural approach for "softening" the max function. For your two number case, the Lp-norm is defined as
+y = (|a|^p + |b|^p)^(1/p)
+where p is a free parameter.
+
+The case p->∞ corresponds to
+y = tf.maximum(a,b)
+and the case p=2 corresponds to the familiar Eucledian distance. Perhaps there could be an intermediate p value which would suit your use case.
+```
+
+前者实现比较复杂，需要更改tensorflow自带的梯度计算函数。于是我按照第二个方案实现了一个Lp-norm-pooling：
+
+```python
+def call(self, x, mask=None):
+    if mask is not None:
+        mask = K.repeat(mask, x.shape[-1])
+        mask = tf.transpose(mask, [0,2,1])
+        mask = K.cast(mask, K.floatx())
+        x = x * mask
+        return K.sum(x**2, axis=self.axis) ** 0.5
+    else:
+        return K.sum(x**2, axis=self.axis) ** 0.5
+```
+
+这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
+另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个太好的pooling策略。
+
+
+
+
+于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
+
+```markdown
+#max-pooling
+Epoch 1/1
+3000000/3000000 [==============================] - 444s 148us/step - loss: 3.5339 - acc: 0.1181 - val_loss: 3.3544 - val_acc: 0.1137
+#使用pre-train embedding的max-pooling
+Epoch 1/1
+3000000/3000000 [==============================] - 342s 114us/step - loss: 3.5083 - acc: 0.1259 - val_loss: 3.3296 - val_acc: 0.1222
+```
+
+
 
 当然，最后采用的做法还是ensemble的思路，如果两种方法各有千秋那么就都一起用，于是最后的方式是同时使用max-pooling和average-pooling，将它们的结果concat起来：
 
