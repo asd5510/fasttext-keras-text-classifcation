@@ -1,4 +1,4 @@
-## 关于fasttext的keras实现以及相关问题探讨
+# 关于fasttext的keras实现以及相关问题探讨
 
 fasttext是facebook开发的一款快速文本分类的工具。工具本身有很多限制，比如只能做分类不能做回归问题，比如pooling的方式只能使用avg-pooling的方式，只能针对char级别进行embedding，无法提取训练好的embedding向量等等。
 综合上述的原因，本篇探讨通过keras实现一个fasttext工具，并且探究其中涉及到的一些机器学习，文本建模相关问题的分析。
@@ -639,10 +639,13 @@ def smoothL1(y_true, y_pred):
 model.compile(optimizer='Adagrad', loss=smoothL1, metrics=['mse'])
 ```
 
-然而换成了smooth L1 loss改善仍然不太明显，那可能的原因还是regression不合适，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，所以regression效果不佳。
+然而换成了smooth L1 loss改善仍然不太明显，我认为可能的原因：
+1）regression可能不合适该场景，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，会对regression效果有影响。
 
-另外regression还有一些别的问题，比如regression对于大值是有偏的，比较容易受到类别不均衡的影响。比较容易受到离群值，噪声值的影响。
+2）smooth L1 loss只能缓解L2-loss受到类别不均衡的影响，缓解对数值差异的敏感程度，依然比较容易受到离群值，噪声值的影响。考虑到我们数据集质量本身就不是很高，造成的影响会更大。
 
- ### 对embedding的分析
+3）regression还有一些别的问题，比如MSE loss对于大值是有偏的(mean squared logarithmic error能够缓解)。另外regression只能输出一个预测值，而classification是能够输出所有类别的概率分布的，相比之下后者输出了更多信息，比如我们可以使用top3 accuracy进行评估，可以了解到所有年龄值的预测概率。
+
+### 对embedding的分析
 
 待续
