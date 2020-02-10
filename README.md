@@ -396,7 +396,16 @@ Out[10]:
 array([[53.        , 55.        , 56.        , 4.96205091e-02,
         4.73697968e-02, 4.54674773e-02]])
 ```
-而从整体准确率上看，max-pooling跟average-pooling相比不相上下。
+而从整体准确率上看，max-pooling跟average-pooling相比不相上下:
+
+```markdown
+#max-pooling
+Epoch 1/1
+3000000/3000000 [==============================] - 342s 114us/step - loss: 3.5083 - acc: 0.0959 - val_loss: 3.3296 - val_acc: 0.1122
+#average-pooling
+Epoch 1/1
+3000000/3000000 [==============================] - 444s 148us/step - loss: 3.5339 - acc: 0.0981 - val_loss: 3.3544 - val_acc: 0.1137
+```
 
 为什么max-pooling对于短文本的分类效果不佳，我发现一个可能的原因是因为短文本没有参与训练导致的。
 首先我们来看一下max-pooling后的具体向量，为此我们需要定义一个tmp model，让这个model的输出是max-pooling的那一层：
@@ -472,8 +481,9 @@ array([[ 0.16801895,  0.4502973 ,  0.39897776,  0.10491236,  0.23625815,
 可以看到取max-pooling，因此随着文本长度的增加，max-pooling后的embedding的正向量比例越来越高。
 
 而由于我的训练样本中绝大部分都是长文本，因此模型接触到的max-pooling后的embedding很少有负值，然而短文本的pooling结果中大量都是负值，这对于模型来说是很陌生的，因此分类效果并不好。
+当然这还只是停留在分析层面，最好的方式需要增加短文本的样本来测试模型是否改善，然而由于样本的限制目前还难以开展，后续有进展了再同步。
 
-并且我发现另外一个问题，max-pooling很大的问题在于每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这对于没有pre-train的wordVec是难以训练的。而相比之前average-pooling每轮迭代所有的embedding都能参与更新。难道这就是为什么fasttext采用average-pooling的原因？
+除此之外，我发现另外一个max-pooling很大的问题在于每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这导致如果不使用pre-train的wordVec的话训练收敛的速度会比较慢。而相比之前average-pooling每轮迭代所有的embedding都能参与更新。也许这就是为什么fasttext采用average-pooling的原因？
 
 查阅了一下资料，Stackoverflow上有个我想问的问题，tf.max/min能否对多个value同时计算梯度并更新？ https://github.com/tensorflow/tensorflow/issues/16028。 里边提到可能需要自定义gradient计算函数，因为tf会对所有定义好的op提供默认的梯度计算方法，比如官方对于tf.max操作的梯度计算是这样的：
 
@@ -528,19 +538,9 @@ def call(self, x, mask=None):
 这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
 另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个太好的pooling策略。
 
-
-
-
 于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
 
-```markdown
-#max-pooling
-Epoch 1/1
-3000000/3000000 [==============================] - 444s 148us/step - loss: 3.5339 - acc: 0.1181 - val_loss: 3.3544 - val_acc: 0.1137
-#使用pre-train embedding的max-pooling
-Epoch 1/1
-3000000/3000000 [==============================] - 342s 114us/step - loss: 3.5083 - acc: 0.1259 - val_loss: 3.3296 - val_acc: 0.1222
-```
+
 
 
 
