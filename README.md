@@ -538,8 +538,7 @@ def call(self, x, mask=None):
 这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
 另外一点，即使是L2-norm在训练过程中网络也很容易发散，看起来不是一个太好的pooling策略。
 
-于是换一种方式验证，使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率太低。
-
+另外换一种方式验证，我使用avg-pooling训练一版emb做为max-pooling的pre-train embedding，效果明显好多了，并且能够继续优化而不只是停滞于pre-train emb的效果，说明max-pooling是能够优化的，只是效率相对较低。
 
 
 
@@ -592,11 +591,53 @@ model.fit(X[:3000000], np.array(age[:3000000])[:,np.newaxis], validation_data=(X
 ```
 只需要把模型的最后一层denseLayer的输出改为1，选线性激活函数。然后将loss换成MSE，也就是均方误差。最后label不需要做one-hot编码了，直接作为target就可以。
 
+然而实测regression模型的效果并不理想，不如分类模型更有效：
 
+```python
+Train on 3000000 samples, validate on 928866 samples
+Epoch 1/3
+3000000/3000000 [==============================] - 424s 141us/step - loss: 0.2108 - mean_squared_error: 351.6949 - val_loss: 226.8362 - val_mean_squared_error: 226.8362
+Epoch 2/3
+3000000/3000000 [==============================] - 439s 146us/step - loss: 0.1569 - mean_squared_error: 200.2703 - val_loss: 180.0601 - val_mean_squared_error: 180.0601
+Epoch 3/3
+3000000/3000000 [==============================] - 445s 148us/step - loss: 0.1370 - mean_squared_error: 183.0301 - val_loss: 180.6361 - val_mean_squared_error: 180.6361
 
-对于regression效果不好的问题，一定程度是因为mse这个loss造成的，l2 loss的好处是收敛快，但是对离群值很敏感，相比之下smoothL1Loss是另一种选择。注意：smooth L1和L1-loss函数的区别在于，L1-loss在0点处导数不唯一，可能影响收敛。smooth L1的解决办法是在0点附近使用平方函数使得它更加平滑，如左图，所以右图对其求导不会有跳变点。
+In [119]: model.predict(to_id('王者 荣耀'))
+Out[119]: array([[27.257313]], dtype=float32)
 
-试了所有的regression loss都没用，那可能的原因还是regression不合适，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，所以regression效果不佳。
+In [120]: model.predict(to_id('辅导班'))
+Out[120]: array([[29.845041]], dtype=float32)
+
+In [121]: model.predict(to_id('毛泽东思想'))
+Out[121]: array([[35.36142]], dtype=float32)
+
+In [122]: model.predict(to_id('京剧'))
+Out[122]: array([[35.35544]], dtype=float32)
+```
+
+可以看到预测结果基本都在一个小范围内，对不同年龄段的词汇能反映出一些正确的差异性，但这个差异很小导致整体预测结果不好。
+
+为什么会造成这个结果？对于regression效果不好的问题，我认为一定程度是因为mse这个loss造成的，l2 loss的好处是收敛快，但是对离群值很敏感，举例而言。对于一个年龄为30岁的用户，如果预测为31岁那么loss是(31-60)^2=1,然而如果预测为60岁那么loss是(60-30)^2=900,两者相差了900倍，这个判错的代价是很大的。再加上我们数据labe分布的不均衡，大量用户都分布在20-40岁之间，导致了模型从loss最小化的角度出发预测结果只能非常保守的留在这个区间。当然我是做了sample加权来缓解了label分布不均匀的问题，但是mse loss对于label不均匀的敏感程度要比分类问题高很多。
+
+还是上边同样的问题如果做分类模型，预测为30岁与预测为60岁的loss是差不多的,因为loss的来源都是从30岁的softmax归一化概率决定的。
+
+考虑到上边的情况，似乎使用L1 loss代替MSE是一种选择。L1 loss相比MSE不会对差异那么敏感。对上边的例子预测为60岁的loss是30，是预测为31岁的30倍，相比900倍要缓和很多。
+而在工程上，相比之下smoothL1Loss是一种更优的选择。注意smooth L1和L1-loss函数的区别在于，L1-loss在0点处导数不唯一，可能影响收敛。smooth L1的解决办法是在0点附近使用平方函数使得它更加平滑，如左图，所以右图对其求导不会有跳变点。
+
+```python
+HUBER_DELTA = 0.5
+def smoothL1(y_true, y_pred):
+   x   = K.abs(y_true - y_pred)
+   x   = K.switch(x < HUBER_DELTA, 0.5 * x ** 2, HUBER_DELTA * (x - 0.5 * HUBER_DELTA))
+   return  K.sum(x)
+
+model.compile(optimizer='Adagrad', loss=smoothL1, metrics=['mse'])
+```
+
+然而换成了smooth L1 loss改善仍然不太明显，那可能的原因还是regression不合适，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，所以regression效果不佳。
+
+另外regression还有一些别的问题，比如regression对于大值是有偏的，比较容易受到类别不均衡的影响。比较容易受到离群值，噪声值的影响。
 
  ### 对embedding的分析
 
+待续
