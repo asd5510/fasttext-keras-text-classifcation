@@ -1,10 +1,11 @@
-# 关于fasttext的keras实现以及相关问题探讨
+# 关于fasttext的keras实现及文本分类相关问题探讨
 
 fasttext是facebook开发的一款快速文本分类的工具。工具本身有很多限制，比如只能做分类不能做回归问题，比如pooling的方式只能使用avg-pooling的方式，只能针对char级别进行embedding，无法提取训练好的embedding向量等等。
 
 综合上述的原因，本篇在一个通过用户文本识别年龄的任务背景下，探讨通过keras实现一个fasttext工具，并且探究其中涉及到的一些机器学习，文本建模相关问题的分析。
 
 **目录：**
+
 **1) fasttext的基本原理**
 
 **2) fasttext的简单实践**
@@ -629,6 +630,7 @@ model.compile(optimizer='Adagrad', loss=smoothL1, metrics=['mse'])
 ```
 
 然而换成了smooth L1 loss改善仍然不太明显，我认为可能的原因：
+
 1）regression可能不合适该场景，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，会对regression效果有影响。
 
 2）smooth L1 loss只能缓解L2-loss受到类别不均衡的影响，缓解对数值差异的敏感程度，依然比较容易受到离群值，噪声值的影响。考虑到我们数据集质量本身就不是很高，造成的影响会更大。
