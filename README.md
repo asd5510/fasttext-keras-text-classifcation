@@ -503,9 +503,9 @@ def call(self, x, mask=None):
         mask = tf.transpose(mask, [0,2,1])
         mask = K.cast(mask, K.floatx())
         x = x * mask
-        return K.sum(x**2, axis=self.axis) ** 0.5
+        return (K.sum(x**2, axis=self.axis) / K.sum(mask, axis=self.axis)) ** 0.5
     else:
-        return K.sum(x**2, axis=self.axis) ** 0.5
+        return (K.sum(x**2, axis=self.axis) / K.sum(mask, axis=self.axis)) ** 0.5
 ```
 
 这里超参数选p=2的就是最常见的L2-norm，p越大则Lp-norm就越近似于max-pooling的效果。但实际发现当p比较大的时候无法收敛，debug后发现是因为数值上溢，当p>=10就会出现数值上溢。
@@ -627,7 +627,7 @@ model.compile(optimizer='Adagrad', loss=smoothL1, metrics=['mse'])
 
 
 45岁中年人关键词：
-社会各界，代表性，情思，深渊，故乡情，千聊，龙门石窟，改制，大人物，锐意进取，大盘，碱性，晒出，识遍，书信，西城，犀牛，衰老，在座，何氏，会触，千秋，十一，活法，色香味，再生资源，必知，神话，香肠，清辉，书多，ufc，发誓，部长，万元，佛光山，条无，听懂，座右铭，共舞，
+社会各界,代表性,情思,深渊,故乡情,千聊,龙门石窟,改制,大人物,锐意进取,大盘,碱性,晒出,识遍,书信,西城,犀牛,衰老,在座,何氏,会触,千秋,十一,活法,色香味,再生资源,必知,神话,香肠,清辉,书多,ufc,发誓,部长,万元,佛光山,条无,听懂,座右铭,共舞
 
 20岁青年人关键词：
 研制,保修,大中专,自考办,心理健康,教育工作者,一程,月租,财政,美楠,稚粉,招考办,超星,工作部,稳重,秀米,公演,介意,不安分,aj,直降,网课,嗡嗡,开水,安卓端,掌桂是,汽修,背心,中有,省委,法学院,普通本科,高至,易班,上售,成考,新增,一共,华中师范大学,兰可欣,lanktom,校区
