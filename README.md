@@ -1,4 +1,4 @@
-# 关于fasttext的keras实现及文本分类相关问题探讨
+# fasttext的keras实现及文本分类相关问题探讨
 
 fasttext是facebook开发的一款快速文本分类的工具。工具本身有很多限制，比如只能做分类不能做回归问题，比如pooling的方式只能使用avg-pooling的方式，只能针对char级别进行embedding，无法提取训练好的embedding向量等等。
 
@@ -30,7 +30,7 @@ fastText简而言之，就是把文档中所有词通过lookup table映射为一
 
 当然，如果只用unigram的话会丢掉word order信息，所以通过加入n-gram features进行补充。fastText是可以对char级别生成embedding的。(这里同bert不同，bert虽然是基于字做vocab，但是每个词的向量不是简单的将字embedding拼起来，而是需要完整经过bert模型前向运行得到，所以得到的词向量效果也非常好，然而fastText这种通过字向量加和成为词向量会极大受到字面匹配程度的干扰导致忽视了语义，一个经典的例子就是fasttext官方的中文词向量进行kNN计算，“交易”最接近的词是“交易法”，但gensim训练的词向量则是“买卖”)。
 
-然而Fasttext的word_ngrams参数很大影响了效率，实测当词库比较大时，2-gram就会非常慢了(主要是保存模型特别慢，2-gram的参数非常多了)，而实际1-gram在多迭代几次后就能达到很好的效果，多数情况下没必要上2-gram。这个同文本分类任务的特性有关：刘至远提到像文本分类这样的任务，如果是长文本，即使用BOW也能做很不错的效果。另外项亮说到文本分类大部分情况下是个简单的线性问题，因为词汇本来就是高度凝结智慧和信息量的产物了，所以多层网络某些情况下没太多意义。
+然而Fasttext的word_ngrams参数很大影响了效率，实测当词库比较大时，2-gram就会非常慢了(主要是保存模型特别慢，2-gram的参数非常多了)，而实际1-gram在多迭代几次后就能达到很好的效果，多数情况下没必要上2-gram。这个同文本分类任务的特性有关：刘致远提到像文本分类这样的任务，如果是长文本，即使用BOW也能做很不错的效果。另外项亮说到文本分类大部分情况下是个简单的线性问题，因为词汇本来就是高度凝结智慧和信息量的产物了，所以多层网络某些情况下没太多意义。
 而我的理解是文本分类任务由于很多情况下不需要捕捉高级的语法关系，上下文语境等等，而只需要做词汇匹配就行。因此由于长文本下BOW不会太过稀疏，效果也会不错。
 
 ## fasttext的简单实践
@@ -229,7 +229,7 @@ array([[61.        , 64.        , 17.        , 1.92667879e-02,
 ## PAD的问题和MASK的意义
 
 
-经过对上边模型结果的测试，发现对于短文本的预测效果不太对，但是人为增长文本后效果又比较正常了，这是为什么呢？
+经过对上边模型结果的测试，发现同样的内容对于短文本的预测效果不太对，但是人为增长文本后效果又比较正常了，这是为什么呢？
 
 注意到上边我们将短文本转化为定长的方式是使用PAD补齐，PAD符号作为编号0也有一个对应的embedding向量，那么可以试想一下对于短文本来说，average-pooling后的向量表达的几乎就是PAD向量了。虽然模型会学到PAD符号是无意义的，但是短文本本身的特点还是得不到充分表达。
 
@@ -278,9 +278,9 @@ class MyMeanPool(Layer):
 上边是一个典型的keras自定义layer的方法，继承keras的Layer类，然后复写call()方法来实现该层的距离逻辑，注意此处传参多了一个mask，这里的mask来自于上边Embedding Layer的mask，mask的shape同input sequence length相同，它会对编号0的部分mask置位为0，其余置为1。所以我们直接通过x = x * mask，将PAD符号对应的embedding置为全0向量。
 
 *插一句题外话，除了上边这种自定义Layer的方法，tf还提供了lambda layer可以只需添加一个lambda表达式作为逻辑，比如keras.layers.Lambda(lambda wide: wide**2)，这个对于大多数简单逻辑更方便，毕竟很多自定义Layer的本质就只需要改写call()而已。比如一个condition_dropout的写法：
-input_cond_drop = keras.layers.Lambda(lambda x: K.switch(K.tf.count_nonzero(x)>5,Dropout(0.5)(x),x))(input)
+input_cond_drop = keras.layers.Lambda(lambda x: K.switch(K.tf.count_nonzero(x)>5,Dropout(0.5)(x),x))(input)*
 
-然后我们将代码稍作修改：
+我们将代码稍作修改：
 
 ```python
 model = Sequential()
@@ -326,7 +326,7 @@ array([[56.        , 55.        , 54.        ,  0.07423874 ,  0.06830128,
 
 This can actually cause a fairly substantial fluctuation in performance in some networks. Suppose that instead of a convnet, we feed the embeddings to a deep averaging network. Then the varying number of nonzero pad vectors (according to which training batch the example is assigned in SGD) will very much affect the value of the average embedding. I've seen this cause a variation of up to 3% accuracy on text classification tasks. **One possible remedy is to set the value of the embedding for the pad index to zero explicitly between each backprop step during training.** This is computationally kind of wasteful (and also requires explicitly feeding the number of nonzero embeddings in each sample to the network), but it does the trick. I would like to see a feature like Torch's LookupTableMaskZero as well.
 
-上边提到实在不行就每次将padding emb强制设置为0，否则用mask是最好的。另外hanxiao在pooling的设计介绍中也提到：
+上边提到实在不行就每次将padding emb强制设置为0，否则用mask是最好的。另外hanxiao在pooling的设计介绍中也提到很多人都会忽视对于PAD的处理，PAD永远需要从计算中排除：
 
 I say almost, as one has to be careful with the padded symbols when dealing with a batch of sequences of different lengths. **Those paddings should never be involved in the calculation.** Tiny details, yet people often forget about them.
 
@@ -360,7 +360,7 @@ array([[18.        , 20.        , 17.        ,  0.02260662,  0.02230301,
 而恰恰不好的一点在于我们的数据集中噪声词非常多，很多词汇完全看不出跟用户的年龄的关系。在这种情况下使用average-pooling不仅仅是长文本置信度低了，而是可能根本就预测不准。
 
 于是为了探寻解决方法，我们将average-pooling换成max-pooling看看。如果不考虑MASK的话，那么只要GlobalAveragePooling1D()换成GlobalMaxPooling1D())
-就行了，但这里棘手的问题在于由于MASK的方案需要保持，所以还是需要自定义一个能够处理mask的max-pooling layer。并且这个带mask的max-pooling layer的设计会复杂一些。由于是要取max，那么为了让PAD符号对应的向量不产生的影响，应该将这个向量转变为一个最负的向量，这样取max操作时才不会有影响：
+就行了，但这里棘手的问题在于由于MASK的方案需要保持，所以还是需要自定义一个能够处理mask的max-pooling layer。并且这里的设计同带mask的average-pooling layer不一样了，由于是要取max，那么为了让PAD符号对应的向量不产生的影响，应该将这个向量转变为一个最负的向量，这样取max操作时才不会有影响：
 
 ```python
 class MyMaxPool(Layer):
