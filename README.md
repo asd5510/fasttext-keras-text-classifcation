@@ -378,7 +378,7 @@ class MyMaxPool(Layer):
             mask = K.repeat(mask, x.shape[-1])
             mask = tf.transpose(mask, [0,2,1])
             mask = K.cast(mask, K.floatx())
-            x = x + (mask-tf.ones_like(mask))
+            x = x + 100*(mask-tf.ones_like(mask))
             return K.max(x, axis=self.axis)# / K.sum(mask, axis=self.axis)
         else:
             return K.max(x, axis=self.axis)
@@ -470,9 +470,9 @@ array([[ 0.16801895,  0.4502973 ,  0.39897776,  0.10491236,  0.23625815, -0.0049
          0.09577966,  0.0346946 ,  0.01458081,  0.16419487,  0.08652248, 0.04348852,  0.04436128,  0.24155124,  0.08992527,  0.25197044,
         -0.00344004,  0.28604078,  0.10116248,  0.07580757,  0.09132104, 0.16214813,  0.18776712,  0.21126825,  0.10442994,  0.22115743]],dtype=float32)
 ```
-可以看到取max-pooling，因此随着文本长度的增加，max-pooling后的embedding的正向量比例越来越高。
+可以看到取max-pooling，因此随着文本长度的增加，max-pooling后的embedding的正值比例越来越高。
 
-而由于我的训练样本中绝大部分都是长文本，因此模型接触到的max-pooling后的embedding很少有负值，然而短文本的pooling结果中大量都是负值，这对于模型来说是很陌生的，因此分类效果并不好。
+而由于我的训练样本中绝大部分都是长文本，因此模型接触到的max-pooling后的embedding很少有负值，然而短文本的pooling结果中大量都是负值，这对于模型来说很陌生，属于未知的向量空间，因此分类效果并不好。
 当然这还只是停留在分析层面，最好的方式需要增加短文本的样本来测试模型是否改善，然而由于样本的限制目前还难以开展，后续有进展了再同步。
 
 除此之外，我发现另外一个max-pooling很大的问题在于每轮只能更新max的embedding，也就意味着每轮只有极少量的embedding能得到更新，这导致如果不使用pre-train的wordVec的话训练收敛的速度会比较慢。而相比之前average-pooling每轮迭代所有的embedding都能参与更新。也许这就是为什么fasttext采用average-pooling的原因？
@@ -499,7 +499,7 @@ def _MinOrMaxGrad(op, grad):
   return [math_ops.div(indicators, num_selected) * grad, None]
 ```
 
-可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。否则就只有max值所在的embedding会得到梯度并更新。
+可以看到明确说如果tf.max有多个same max值，那么会把梯度平均分给这几个value。否则就只有max值所在的value会得到梯度并更新。
 
 有两种方法改善tf.max的梯度影响范围，一种是自定义gradient计算函数，另一种是”softening” the max function，比如有人提到可以不取max，而是按照大小先排序，然后对这个排序进行加权求和，从而使得所有的值都能够参与到运算中去。另外还有人提到将max function改成Lp-norm：
 
@@ -632,11 +632,11 @@ model.compile(optimizer='Adagrad', loss=smoothL1, metrics=['mse'])
 
 然而换成了smooth L1 loss改善仍然不太明显，我认为可能的原因：
 
-1）regression可能不合适该场景，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，会对regression效果有影响。
+1）regression可能不合适该场景，regression适用于feats x同y有正负相关性的，所以regression的例子很少最有名的就是house price prediction。而对于text prediction，词向量同y是没有线性关系的，可能会对regression效果有影响。
 
 2）smooth L1 loss只能缓解L2-loss受到类别不均衡的影响，缓解对数值差异的敏感程度，依然比较容易受到离群值，噪声值的影响。考虑到我们数据集质量本身就不是很高，造成的影响会更大。
 
-3）regression还有一些别的问题，比如MSE loss对于大值是有偏的(mean squared logarithmic error能够缓解)。另外regression只能输出一个预测值，而classification是能够输出所有类别的概率分布的，相比之下后者输出了更多信息，比如我们可以使用top3 accuracy进行评估，可以了解到所有年龄值的预测概率。
+3）regression还有一些别的问题，比如MSE loss对于大数值是有偏的(mean squared logarithmic error能够缓解)。另外regression只能输出一个预测值，而classification是能够输出所有类别的概率分布的，相比之下后者输出了更多信息，比如我们可以使用top3 accuracy进行评估，可以了解到所有年龄值的预测概率。
 
 ## 对embedding的分析
 
